@@ -1,0 +1,33 @@
+# Generated observations, checkpoints, plots and exports.
+/results/
+/data/
+/figures/exploratory/
+
+# Local Python and Jupyter files.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.envrc
+build/
+dist/
+.ipynb_checkpoints/
+.pytest_cache/
+.vscode/
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+
+/MEETING_REPORT_*.txt
+# Share the authoritative clean input with collaborators.
+!/data/
+/data/*
+!/data/reference/
+/data/reference/*
+!/data/reference/synthetic_original_1024/
+/data/reference/synthetic_original_1024/*
+!/data/reference/synthetic_original_1024/reference_1024.npz
+!/data/reference/synthetic_original_1024/validation.json

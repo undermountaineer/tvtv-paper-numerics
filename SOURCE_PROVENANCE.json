@@ -1,0 +1,16 @@
+{
+  "source_commit": "6ae4532e1e1fa24367623f44e662f6fb52e4e291",
+  "source_branch": "performance/small-pass",
+  "performance_files_sha256": {
+    "src/tvtv_numerics/proximal.py": "f719a2544d40d3f3fe9652560fb7c38efbe1d3be2953ea62614aafddef778f25",
+    "src/tvtv_numerics/weighted_solver.py": "cc17206d515c4a4806cede60d55b6214e68f59e963f722af4ff6751b34f8c912",
+    "data/reference/synthetic_original_1024/reference_1024.npz": "99f2e56dc8bfc22ee9dca3fa7a23a08b4eac76f7c6a3cc7212060c50620ce834"
+  },
+  "changes": [
+    "New README and meeting scripts",
+    "512 and 256 working-grid configurations",
+    "Maximum spatial depth restricted to one"
+  ],
+  "unchanged": "All src/tvtv_numerics files; phantom, noise, model, alpha search, initialization, tolerances and acceptance rule",
+  "results": "Fresh experiment outputs are ignored by Git. Existing ignored results were not copied."
+}

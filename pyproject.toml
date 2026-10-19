@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tvtv-dyadic-numerics"
+version = "0.1.0"
+description = "Minimal proof of concept for spatially weighted TV-TV reconstruction."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+notebook = ["jupyterlab>=4", "ipykernel>=6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

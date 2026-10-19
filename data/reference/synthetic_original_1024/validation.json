@@ -1,0 +1,40 @@
+{
+  "shape": [
+    5,
+    1024,
+    1024
+  ],
+  "dtype": "float64",
+  "intensity_min": 0.16,
+  "intensity_max": 0.83,
+  "finite": true,
+  "noise_added": false,
+  "supersample": 4,
+  "sampling": "4x4 subpixel averaging per output pixel",
+  "times": [
+    0.0,
+    1.0,
+    2.0,
+    3.0,
+    4.0
+  ],
+  "velocity_xy_domain_units_per_frame": [
+    0.003,
+    0.0015
+  ],
+  "displacement_xy_pixels_per_frame": [
+    3.072,
+    1.536
+  ],
+  "reference_sha256": "35886d078e92ceb7bd499f5889e6b08952daa866d4f6f06ada910c8f54e27430",
+  "png_format": "8-bit grayscale; full-precision values preserved in NPZ",
+  "source_hashes": {
+    "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "data.py": "cb64294d287e27a18db040cd8cfbb4d6b5517ce5110a5c128cc31449ef1d847e",
+    "minimal_phantom.py": "414b86fcb8f6aa8f16f5586e55b62fe40679c7b6710fe5abb367a6a9d1b40dd2"
+  },
+  "scene": "Same phantom-v2 geometry, resolved texture and translation as the reviewed 128x128 experiment.",
+  "edges": "Ring, slab and slits are sharp interfaces with subpixel antialiasing. The ellipse remains intrinsically diffuse.",
+  "png_dimensions_verified": true,
+  "png_pixels_match_reference_quantization": true
+}

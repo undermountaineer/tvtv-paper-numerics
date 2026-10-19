@@ -1,0 +1,84 @@
+{
+  "source_branch": "feature/minimal-dyadic-proof-of-concept",
+  "source_commit": "10d6450",
+  "source_handoff": "tvtv-handoff-2026-10-07.zip",
+  "model": {
+    "sigma": 0.1,
+    "beta": 0.0125,
+    "kappa": 1
+  },
+  "local_selection": {
+    "selected_alphas": {
+      "top_left": 0.001,
+      "top_right": 0.001,
+      "bottom_left": 0.000875,
+      "bottom_right": 0.000875
+    },
+    "selected_on_shortlist_boundary": {
+      "top_left": true,
+      "top_right": true,
+      "bottom_left": false,
+      "bottom_right": false
+    },
+    "local_split_accepted_strict_cost_test": false,
+    "costs": {
+      "parent_global": 0.007726162371657207,
+      "children_same_alpha": 0.007914797159053947,
+      "children_selected_alpha": 0.007850382386952242
+    },
+    "gains": {
+      "cropping_relative_gain": -0.024415068998385525,
+      "parameter_relative_gain_on_crops": 0.00813852469080889,
+      "total_local_relative_gain": -0.016077841665705472,
+      "global_nominal_relative_gain": 0.009993914936834991,
+      "global_tighter_relative_gain": 0.008297252942960243
+    }
+  },
+  "fresh_noise": {
+    "complete": true,
+    "completed_solves": 12,
+    "planned_solves": 12,
+    "mean_relative_gain": 0.012026585287627567,
+    "minimum_relative_gain": 0.00822957779414546,
+    "maximum_relative_gain": 0.015899299064476846,
+    "spatial_wins": 3,
+    "per_seed_comparisons": [
+      {
+        "seed": 202610071,
+        "all_four_converged": true,
+        "fixed_baseline_pair_complete": true,
+        "gain_vs_fixed_constant": 0.00822957779414546,
+        "best_constant_case": "constant_0.000875",
+        "constant_loss": 0.007643506056005804,
+        "spatial_loss": 0.007580603228297882,
+        "gain_vs_best_tested_constant": 0.00822957779414546,
+        "RMSE_relative_gain": 0.0015735487007332294,
+        "texture_RMSE_relative_gain": 3.5887066988093963e-06
+      },
+      {
+        "seed": 202610072,
+        "all_four_converged": true,
+        "fixed_baseline_pair_complete": true,
+        "gain_vs_fixed_constant": 0.011950879004260395,
+        "best_constant_case": "constant_0.000875",
+        "constant_loss": 0.007801310955562826,
+        "spatial_loss": 0.007708078432258283,
+        "gain_vs_best_tested_constant": 0.011950879004260395,
+        "RMSE_relative_gain": 0.003331621532871032,
+        "texture_RMSE_relative_gain": 9.14578254951337e-06
+      },
+      {
+        "seed": 202610073,
+        "all_four_converged": true,
+        "fixed_baseline_pair_complete": true,
+        "gain_vs_fixed_constant": 0.015899299064476846,
+        "best_constant_case": "constant_0.000875",
+        "constant_loss": 0.007442810921657563,
+        "spatial_loss": 0.007324475444933775,
+        "gain_vs_best_tested_constant": 0.015899299064476846,
+        "RMSE_relative_gain": 0.004409807962332257,
+        "texture_RMSE_relative_gain": -1.8441253561984894e-06
+      }
+    ]
+  }
+}

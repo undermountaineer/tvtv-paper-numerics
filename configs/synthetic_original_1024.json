@@ -1,0 +1,96 @@
+{
+  "data": {
+    "master": "data/reference/synthetic_original_1024/reference_1024.npz",
+    "master_sha256": "99f2e56dc8bfc22ee9dca3fa7a23a08b4eac76f7c6a3cc7212060c50620ce834",
+    "resolution": 128,
+    "noise_std": 0.1,
+    "design_seed": 20260930,
+    "validation_seeds": [
+      202610071,
+      202610072,
+      202610073
+    ]
+  },
+  "model": {
+    "kappa": 1.0,
+    "beta": 0.0125
+  },
+  "search": {
+    "initial_alphas": [
+      0.00075,
+      0.000875,
+      0.001
+    ],
+    "bounds": [
+      0.0001875,
+      0.005333333333333333
+    ],
+    "expansion_factor": 2.0,
+    "max_expansions": 3,
+    "midpoint_rounds": 1
+  },
+  "refinement": {
+    "max_depth": 2,
+    "rho": 1.0
+  },
+  "solver": {
+    "local": {
+      "kappa": 1.0,
+      "hx": 0.0078125,
+      "hy": 0.0078125,
+      "ht": 1.0,
+      "max_outer_iterations": 128,
+      "max_inner_u_iterations": 250,
+      "max_inner_v_iterations": 500,
+      "min_inner_iterations": 10,
+      "inner_tolerance": 0.0005,
+      "inner_absolute_tolerance": 5e-07,
+      "outer_tolerance": 0.0005,
+      "outer_absolute_tolerance": 5e-07,
+      "outer_velocity_tolerance_pixels": 0.005,
+      "outer_energy_tolerance": 0.0005,
+      "outer_energy_absolute_tolerance": 1e-10,
+      "required_outer_successes": 2,
+      "theta": 1.0,
+      "step_safety": 0.9,
+      "norm_iterations": 40,
+      "update_order": "u_then_v",
+      "objective_increase_tolerance": 1e-08,
+      "objective_increase_absolute_tolerance": 1e-10,
+      "max_objective_backtracks": 12,
+      "step_policy": "balanced",
+      "residual_mode": "scaled",
+      "balanced_u_step": 0.1,
+      "verbose": false
+    },
+    "tighter": {
+      "kappa": 1.0,
+      "hx": 0.0078125,
+      "hy": 0.0078125,
+      "ht": 1.0,
+      "max_outer_iterations": 128,
+      "max_inner_u_iterations": 400,
+      "max_inner_v_iterations": 400,
+      "min_inner_iterations": 10,
+      "inner_tolerance": 0.00025,
+      "inner_absolute_tolerance": 2.5e-07,
+      "outer_tolerance": 0.00025,
+      "outer_absolute_tolerance": 2.5e-07,
+      "outer_velocity_tolerance_pixels": 0.0025,
+      "outer_energy_tolerance": 0.00025,
+      "outer_energy_absolute_tolerance": 5e-11,
+      "required_outer_successes": 2,
+      "theta": 1.0,
+      "step_safety": 0.9,
+      "norm_iterations": 40,
+      "update_order": "u_then_v",
+      "objective_increase_tolerance": 1e-08,
+      "objective_increase_absolute_tolerance": 1e-10,
+      "max_objective_backtracks": 12,
+      "step_policy": "balanced",
+      "residual_mode": "scaled",
+      "balanced_u_step": 0.1,
+      "verbose": false
+    }
+  }
+}
