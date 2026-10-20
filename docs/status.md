@@ -1,8 +1,12 @@
-# Reviewed status — October 7, 2026
+# Historical 128-grid evidence — October 7, 2026
 
-The local alpha choices produce a small, repeatable improvement after a global
-joint reconstruction. This is enough to keep the current example as a proof
-of concept; it is not yet a persuasive automatic refinement result.
+These results describe the earlier directly rendered 128×128 frozen-map
+experiment. They are historical evidence, not outputs of the current 1024-master
+256/512 protocols. Current result records are generated per configuration and
+source identity under `results/`.
+
+The historical local alpha choices produced a small improvement after global
+joint reconstruction, while the strict crop-cost test rejected the split.
 
 | Observation | Constant image loss | Spatial image loss | Relative loss gain |
 |---|---:|---:|---:|
@@ -29,20 +33,12 @@ sum is still above the parent's global cost. The strict split test therefore
 rejects the split. The top-cell choices are on the upper shortlist boundary;
 the global constant optimum has only been tested in a finite shortlist.
 
-## Sensible continuation
-
-Use the imported results and single notebook to explain the current example
-to the collaborator. The immediate scientific decision is how to improve the
-size of the global gain while addressing crop-boundary costs in a refinement
-rule. Keep that distinction explicit before introducing deeper partitions,
-real data, or a wider beta search. The current branch retains everything
-needed to reproduce the one-level selection and global/fresh-noise comparisons.
-
 ## Evidence and provenance
 
 `evidence/reviewed_summary.json`, `local_selection.csv` and `fresh_noise.csv`
 are condensed from the supplied `tvtv-handoff-2026-10-07.zip`. They describe
 historical completed runs from branch `feature/minimal-dyadic-proof-of-concept`,
 commit `10d6450`. They are not outputs of new cleanup computations. Full arrays
-and histories remain in the original handoff and can be imported by the single
-runner. Newly generated reports belong under `results/`.
+and histories belong to their original archive and scientific source version.
+Source-compatibility checks apply to any attempted import. Newly generated
+reports belong under `results/`.

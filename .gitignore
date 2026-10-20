@@ -22,7 +22,7 @@ dist/
 Thumbs.db
 
 /MEETING_REPORT_*.txt
-# Share the authoritative clean input with collaborators.
+# Versioned clean reference data.
 !/data/
 /data/*
 !/data/reference/
@@ -31,3 +31,6 @@ Thumbs.db
 /data/reference/synthetic_original_1024/*
 !/data/reference/synthetic_original_1024/reference_1024.npz
 !/data/reference/synthetic_original_1024/validation.json
+
+# Generated experiment report pointers.
+/EXPERIMENT_REPORT_*.txt

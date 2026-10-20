@@ -42,6 +42,14 @@ def main():
                   f"- Search boundary limited: **{search.get('boundary_limited', False)}**."]
     if state.get("blocked"):
         lines += [f"- Blocked: {state['blocked']}"]
+    continuation_path = exp.out / "STOPPING_FIX_CONTINUATION.json"
+    if continuation_path.exists():
+        import json
+        continuation = json.loads(continuation_path.read_text())
+        lines += ["", "Local training uses explicitly continued pre-fix checkpoints. "
+                  "Each imported state requires fresh convergence checks under the corrected policy; "
+                  "tighter global comparisons start from the original observation-based initialization.",
+                  f"Continuation provenance: `{continuation_path.name}` ({len(continuation['imports'])} imported states)."]
     if not state["complete"]:
         lines += ["", "No completed spatial-versus-constant conclusion is available yet."]
     for decision in state["decisions"]:

@@ -36,47 +36,49 @@ This is the image-only upper loss (`gamma_u=1`, `gamma_v=0`), without a factor
 `2/3`. RMSE, PSNR and motion error are additional diagnostics. Crop losses
 retain the original physical spacings and full time interval.
 
-## Current proof of concept
+## Synthetic protocols
 
-Five 128×128 frames show a translating scene with smooth shading, sharp
-interfaces and resolved texture. Independent unclipped Gaussian noise has
-standard deviation 0.1. The scene is rendered by 4×4 midpoint sampling per
-pixel. The continuous velocity is `(0.003, 0.0015)` in domain units per time.
+The clean input is the versioned five-frame 1024 master. Each protocol declares
+the observation/reconstruction grid; clean block averaging precedes independent
+Gaussian noise. The current protocols use 256 or 512 pixels per spatial axis,
+noise standard deviation 0.1, and the physical translation `(0.003, 0.0015)`.
+The same working-grid reference is used to score each reconstruction.
 
-Only alpha is varied in this experiment; beta=0.0125 and kappa=1 are fixed.
-The tested alpha shortlist is `0.00075, 0.000875, 0.001`. Four spatial crops
-each contain all five frames. The reviewed local choices are 0.001 on the top
-half and 0.000875 on the bottom half. The assembled map is always reconstructed
-in a global joint solve; a crop mosaic is not the global solution.
+Alpha is selected by bounded scalar search. Beta=0.0125 and kappa=1 are fixed.
+Each local region retains all time frames and the physical pixel spacing.
+The current depth-one partition is constant or has four spatial children.
+The accepted map is assembled into a single global reconstruction; independent
+crop reconstructions are used for parameter selection and the split test only.
 
-The local velocity block has the reviewed 500-iteration cap. Global nominal
-blocks have caps of 250; tighter blocks have caps of 400 and halved stopping
-tolerances. All current exact settings are in the one configuration file.
-Constant and spatial results are compared at matching tighter settings.
+See [experiment protocol](experiment_protocol.md) for the constant search,
+local acceptance test, full-domain comparison and frozen fresh-noise evaluation.
+Exact solver caps and stopping thresholds are in the configuration files.
 
-The map is frozen before the three validation observations are generated.
-Each observation has its own observation-derived initial motion shared by all
-four competitors. The best of three constants on each validation observation
-is an oracle shortlist comparator, not a globally optimal parameter choice.
+## Solver and interpretation
 
-## Interpretation and relation to the papers
+The implementation alternates convex image and motion subproblems using PDHG.
+The scaled solver checks the residuals of the safeguarded returned primal/dual
+state. The outer loop also checks image and motion changes, energy change and
+two consecutive successful updates. An unfinished solve cannot enter parameter
+selection. Source and problem identities guard checkpoint reuse.
 
-Burger–Dirks–Schönlieb's joint reconstruction/motion model supplies the basic
-TV–TV coupling and alternating-solver context. The active manuscript version
-uses the 3/2 fidelity and vectorial velocity TV specified above. The separate
-squared-L2 BDS solver is unnecessary for this comparison and has been removed.
+BDS supplies the alternating joint reconstruction/motion structure. The 3/2
+fidelity and joint Frobenius motion-TV norm follow the model implemented here.
+DFFI motivates local scalar learning and spatial dyadic refinement. Bounded
+scalar search replaces its convex sensitivity/piggyback parameter update in
+this nonconvex joint problem. These are documented adaptations, not an exact
+reproduction of either paper's numerical experiments.
 
-Davoli–Ferreira–Fonseca–Iglesias motivates local parameter selection and dyadic
-partitions. Its strict cost logic must be distinguished from assembling a
-proposed map and evaluating its global reconstruction. Here the strict local
-split is rejected. A global gain therefore supports the usefulness of spatial
-weights, while successful automatic dyadic refinement remains unresolved.
+The numerical energy uses a finite transport penalty. It does not enforce an
+exact optical-flow constraint or the theoretical velocity/divergence bounds.
+Finite residual convergence does not prove a global joint minimizer or an exact
+optimistic bilevel solution. Local split acceptance and global reconstruction
+gain must be reported separately. Fresh-noise checks on one scene assess that
+setup; they do not establish generalization to other scenes.
 
-The numerical problem uses a finite transport penalty, alternating block
-minimization and finite parameter shortlists. It does not enforce the exact
-optical-flow constraint or the manuscript's theoretical velocity/divergence
-bounds. Convergence means the implemented residual, change and energy criteria
-were met. It does not establish a global joint minimizer or an exact optimistic
-bilevel solution. This example is evidence for the numerical approximation of
-the model; the three noise samples do not establish statistical significance
-or generalization to other scenes.
+## Reference works
+
+- Burger, Dirks and Schönlieb: *A variational model for joint motion estimation
+  and image reconstruction* (2018).
+- Davoli, Ferreira, Fonseca and Iglesias: *Spatially varying regularization
+  parameters for TV* (2025), local learning and dyadic refinement framework.

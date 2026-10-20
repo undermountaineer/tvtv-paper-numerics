@@ -1,42 +1,19 @@
-# TV–TV numerical proof of concept
+# Spatially weighted TV–TV reconstruction
 
-The active experiment asks whether spatial image-TV weights improve joint image
-reconstruction and motion estimation over a tuned constant weight. Start with
-`configs/meeting_512.json` and the commands below. This repository begins with
-one `main` branch. `SOURCE_PROVENANCE.json` records the original source commit.
+Numerical experiments for joint image reconstruction and motion estimation with
+spatially varying total-variation regularisation. The main experiment compares
+a learned piecewise-constant image-TV weight with a tuned constant weight on a
+synthetic image sequence.
 
-## Active experiment
+The reconstruction follows the alternating image/motion structure of
+Burger–Dirks–Schönlieb (BDS). Spatial parameter learning adapts the local
+selection and dyadic refinement framework of Davoli–Ferreira–Fonseca–Iglesias
+(DFFI). The implemented fidelity, motion-TV norm and scalar search are described
+in [the numerical model](docs/model.md).
 
-- Five synthetic frames, each observed and reconstructed at **512×512**.
-- The existing clean 1024 master is averaged in 2×2 blocks **before** noise is
-  added. This is a 512 reconstruction, not a 1024 reconstruction displayed small.
-- Spatially uniform, unclipped Gaussian noise, standard deviation 0.1.
-- Existing observation-only initialization, model, solver, tolerances and loss.
-- Learn image-TV alpha; beta=0.0125 and kappa=1 remain fixed.
-- Existing bounded alpha search, including endpoint expansion and midpoint tests.
-- At most **one spatial split**: one constant or four 256×256 cells. Every crop
-  retains all five frames and the original spatial spacing.
-- Strict existing local split criterion, rho=1. Rejection retains the constant.
-- Global comparison uses the existing tighter settings and identical input and
-  initialization. A proposed rejected split is a separately labelled diagnostic.
-- Three declared fresh-noise seeds remain untouched until the design is frozen.
+## Installation
 
-Only image resolution and maximum tree depth differ from the original config;
-the step sizes, stopping rules, alpha bounds, scene and noise design do not change.
-`configs/meeting_256.json` is a separate, optional deadline fallback. It makes a
-256×256 observation and reconstruction; it must be reported as a pilot and is
-not interchangeable with the 512 experiment. It is not run automatically.
-
-## Install
-
-Use the environment that already passed the performance checks:
-
-```bash
-conda activate tvtv-numerics
-python -m pip install --no-build-isolation --no-deps -e .
-```
-
-For a colleague's fresh installation:
+From the repository root, with conda or miniforge installed:
 
 ```bash
 conda env create -f environment.yml
@@ -44,121 +21,130 @@ conda activate tvtv-numerics
 python -m unittest discover -s tests -v
 ```
 
-## Run today
-
-From this repository's root:
+For an existing environment, update its editable installation:
 
 ```bash
-mkdir -p results
-python -u scripts/run_meeting.py 2>&1 | tee results/meeting_512.log
+conda activate tvtv-numerics
+python -m pip install --no-build-isolation --no-deps -e .
 ```
 
-Keep the terminal open and the computer awake. The sequence is prepare →
-constant search → one-level spatial search → tighter global comparison. Maximum
-batch budgets are 180, 180 and 90 minutes for the three compute stages. These
-are ceilings, **not runtime predictions**. A stage can finish much sooner.
-Preparation and final reporting add overhead. Heavy solver workers use one
-numerical thread. Run only one compute sequence at a time.
+Python 3.12 is required. The numerical dependencies are NumPy, SciPy and
+Matplotlib. The environment also includes JupyterLab and an IPython kernel.
+The Python commands below work on Linux and Windows.
 
-The sequence stops at the first unresolved stage and saves a meeting report.
-Time limits preserve complete outer checkpoints. Repeat the **same command**
-to reuse completed work and resume partial solves. An iteration cap, numerical
-failure or search-boundary stop needs inspection; repeating cannot resolve it.
-Do not change tolerances midway through a comparison or count partial candidates
-as converged results. Ctrl+C in this foreground terminal stops the active worker.
+## Experiments
 
-For an unattended run that survives closing the terminal, instead use:
+Both configurations use five frames, spatially uniform unclipped Gaussian noise
+with standard deviation 0.1, and one possible spatial split. Only the image-TV
+weight alpha is learned; beta=0.0125 and kappa=1 remain fixed.
+
+| Configuration | Observation and reconstruction grid | Spatial parameter partition |
+|---|---|---|
+| `configs/synthetic_256.json` | 256×256 | One weight, or four 128×128 regions |
+| `configs/synthetic_512.json` | 512×512 | One weight, or four 256×256 regions |
+
+The clean input is a versioned 1024×1024 master. Clean pixels are block-averaged
+to the selected image grid before noise is added. The parameter partition is
+independent of that image grid. Each spatial region retains the full time
+interval and the original pixel spacing.
+
+Run the 256 experiment:
 
 ```bash
-mkdir -p results
-nohup python -u scripts/run_meeting.py > results/meeting_512.log 2>&1 < /dev/null &
-echo "Runner PID: $!"
+python -u scripts/run_experiment.py --config configs/synthetic_256.json
 ```
 
-Do not start this as well as the foreground command. Monitor in another terminal:
+This prepares observations, selects a constant alpha, tests the spatial split,
+and compares the accepted map with the selected constant in full-domain solves
+at tighter tolerances. The default stage budgets are 45, 45 and 30 minutes.
+Budgets bound computation time; they are not runtime predictions. Repeating
+the command reuses completed solves and resumes compatible checkpoints.
+
+For a 512 experiment with larger computation budgets:
 
 ```bash
-tail -f results/meeting_512.log
+python -u scripts/run_experiment.py --config configs/synthetic_512.json --baseline-minutes 180 --refine-minutes 180 --compare-minutes 90
 ```
 
-Ctrl+C in the monitoring terminal only stops `tail`. It does not stop the run.
-
-## Meeting output
-
-Rebuild the note and figures from saved states; this starts **no solver**:
+Individual stages can be run explicitly:
 
 ```bash
-python scripts/meeting_report.py --config configs/meeting_512.json
-cat MEETING_REPORT_512.txt
+python scripts/run_experiment.py prepare --config configs/synthetic_256.json
+python scripts/run_experiment.py baseline --config configs/synthetic_256.json --budget-minutes 45
+python scripts/run_experiment.py refine --config configs/synthetic_256.json --budget-minutes 45
+python scripts/run_experiment.py compare --config configs/synthetic_256.json --budget-minutes 30
 ```
 
-The pointer gives the exact report directory under
-`results/synthetic_original_1024/<protocol-id>/`. Open:
+The workflow stops at the first unresolved candidate. Time-limited work can be
+resumed; an iteration cap, numerical failure or boundary-limited search needs
+inspection. Incomplete candidates never enter parameter selection or split
+acceptance. Run one computation sequence per checkout at a time.
 
-- `MEETING_REPORT.md`: constant search, split decision, completed comparisons,
-  candidate status and solver seconds. Unfinished work is labelled.
-- `meeting_comparison.png`: clean, noisy, constant, accepted-map reconstruction.
-- `meeting_texture.png`: the same panels in the fine-structure region.
-- `meeting_weights.png`: the accepted alpha map, once learning is complete.
-- `summary.json`, `learning.json`, `candidates.csv`, `protocol.json`: full metrics
-  and the configuration/source identity.
+## Reports and validation
 
-If the first split is rejected, the accepted map is constant and its zero gain
-is expected. A global gain of a rejected proposed map is a diagnostic; it does
-not establish successful automatic partition learning. Increasing depth does
-not help a rejected first split. Discuss scene/noise design or the local crop
-criterion before launching more runs.
-
-If a nonconstant accepted map shows a credible global benefit, freeze it and run
-the existing three fresh-noise comparisons:
+Build the report and figures from saved states without running a solver:
 
 ```bash
-python scripts/run_original_1024.py validate --config configs/meeting_512.json --seconds 21600 --budget-minutes 360
-python scripts/meeting_report.py --config configs/meeting_512.json
+python scripts/report_experiment.py --config configs/synthetic_256.json
 ```
 
-Validation is deliberately not in today's automatic sequence. Do not tune on
-those seeds. Before a manuscript claim, check that the finite-search constant
-remains competitive at the tighter settings; this is not a certified global
-parameter optimum. A design-seed improvement alone is not generalization.
+The command prints the report path under
+`results/synthetic_original_1024/<protocol-id>/`. Main outputs are:
 
-## Deadline fallback
+| File | Contents |
+|---|---|
+| `EXPERIMENT_REPORT.md` | Parameter choices, convergence status, split decisions and comparisons |
+| `comparison.png`, `texture.png` | Full-image reconstruction and fine-structure detail |
+| `weights.png` | Accepted alpha map, when parameter learning is complete |
+| `summary.json`, `candidates.csv` | Metrics and candidate diagnostics |
+| `protocol.json`, `learning.json` | Configuration/source identity and partition decisions |
 
-Only if the 512 run is too slow for tomorrow, stop it before switching, then:
+Freeze the design-selected constant and accepted map before evaluating the
+three declared fresh-noise seeds:
 
 ```bash
-python -u scripts/run_meeting.py --config configs/meeting_256.json --baseline-minutes 90 --refine-minutes 90 --compare-minutes 45 2>&1 | tee results/meeting_256.log
+python scripts/run_experiment.py validate --config configs/synthetic_256.json --budget-minutes 120
+python scripts/run_experiment.py report --config configs/synthetic_256.json
 ```
 
-This uses separate input, protocol and solve identities; it does not overwrite
-or resume the 512 experiment. Retune alpha at each resolution; the existing
-endpoint expansion handles this within its declared bounds.
+Validation seeds are not used for tuning. Local split acceptance and global
+reconstruction gain are separate results. A rejected split can have a useful
+proposed-map diagnostic, but that diagnostic is not an accepted learned map.
+Small gains require matched accuracy checks and a competitive constant control.
+See [the experiment protocol](docs/experiment_protocol.md).
 
-## Share
+## Reproducibility
 
-Git contains code, configurations, documentation and the 23 MiB clean master.
-Generated observations, checkpoints, results and logs are ignored. The summary
-pointer `MEETING_REPORT_*.txt` is also ignored. Do not add the result cache to Git.
-To give a colleague complete numerical outputs, use the existing separate export:
+Git tracks source, configurations, documentation and the clean master.
+Generated observations, checkpoints, figures and result exports are kept under
+the ignored `results/` directory. Existing configuration filenames remain
+supported. The neutral 256 configuration has the same settings as the corrected
+256 continuation configuration, so it identifies the same saved experiment.
+
+Export the selected experiment, including available numerical arrays:
 
 ```bash
-python scripts/run_original_1024.py export --config configs/meeting_512.json
+python scripts/run_experiment.py export --config configs/synthetic_256.json
 ```
 
-Its path is printed. It contains source/configuration and available result and
-checkpoint arrays and may be large. Sharing the repository alone shares the
-implementation and reproducible clean input, not your computed outputs.
+Keep the configuration and source identity with every reported result. Detailed
+instructions are in [reproducibility](docs/reproducibility.md). The numerical
+experiment is a finite approximation of a nonconvex joint problem; its stopping
+criteria do not establish a global joint or bilevel optimum.
 
-## Background
+## Repository structure
 
-`docs/model.md` describes the numerical model. `docs/performance_pass.md` records
-the runtime-only update; `docs/meeting_protocol.md` states the stop/go decisions.
-`docs/synthetic_original_1024.md` describes the original **128/depth-two** protocol;
-use the explicit meeting configs for the active experiment.
+| Path | Purpose |
+|---|---|
+| `src/tvtv_numerics/` | Operators, energies, proximal maps, block solver and parameter-learning workflow |
+| `scripts/run_experiment.py` | Experiment stages and bounded computation sequence |
+| `scripts/report_experiment.py` | Reports and figures from saved states |
+| `configs/synthetic_*.json` | Current synthetic protocols |
+| `data/reference/synthetic_original_1024/` | Clean master and its validation metadata |
+| `notebooks/synthetic_original_1024.ipynb` | Interactive walkthrough with explicit computation switches |
+| `tests/` | Numerical and checkpoint regression tests |
+| `evidence/` | Historical 128-grid summaries; see [their scope](docs/status.md) |
 
-`configs/proof_of_concept.json`, `scripts/run.py`,
-`notebooks/proof_of_concept.ipynb` and `evidence/` retain the earlier frozen-map
-study for provenance. Its small gains are not results for this new 512 protocol.
-The model follows the BDS alternating-block structure and adapts the DFFI local
-learning/refinement logic. The existing scalar search and joint nonconvex model
-make this an adaptation, not an exact reproduction of either paper.
+The earlier frozen-map protocol and notebook remain available as historical
+experiments. Their numerical summaries do not describe the current 256 or 512
+protocols.

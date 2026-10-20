@@ -180,6 +180,7 @@ class WeightedBlockResult:
     safeguard_adjustment: float = 0.0
     dual: Array | tuple[Array, Array] | None = None
     residual_evaluations: int = 0
+    returned_state_checked: bool = False
 
 
 @dataclass
@@ -417,9 +418,23 @@ def solve_weighted_u_block(
     dual_limit = 0.0
     iterate_change = np.inf
     inner_converged = False
+    accepted_candidate = None
 
     image_scale = max(_rms(f), 0.1)
     residual_evaluations = 0
+
+    def fixed_point_residuals(value):
+        probe = prox_l32_fidelity(value - tau*adjoint((dual_tv, dual_transport)), f, tau)
+        ku_tv, ku_transport = forward(value)
+        probe_tv = project_scalar_tv_ball(dual_tv + sigma_tv*ku_tv, alpha)
+        probe_transport = np.clip(dual_transport + sigma_transport*ku_transport,
+                                  -config.kappa, config.kappa)
+        return (_rms(value-probe)/image_scale,
+                max(_rms((dual_tv-probe_tv)/alpha[..., None]),
+                    _rms((dual_transport-probe_transport)/config.kappa)),
+                _rms((value-probe)/tau),
+                _combined_rms(((dual_tv-probe_tv)/sigma_tv,
+                               (dual_transport-probe_transport)/sigma_transport)))
 
     objective = lambda candidate: weighted_u_block_objective(
         candidate,
@@ -431,10 +446,6 @@ def solve_weighted_u_block(
         config.hx,
         config.hy,
     )
-    initial_block_objective = objective(u_start) if config.residual_mode == "scaled" else 0.0
-    early_stop_allowance = (config.objective_increase_absolute_tolerance
-        + config.objective_increase_tolerance*max(1.,abs(initial_block_objective)))
-
     for iteration in range(
         1,
         config.max_inner_u_iterations + 1,
@@ -543,11 +554,15 @@ def solve_weighted_u_block(
             and primal_residual <= primal_limit
             and dual_residual <= dual_limit
         ):
-            # A residual-qualified iterate that still increases the block
-            # objective needs more inner work, rather than an early exit that
-            # is subsequently rejected by the safeguard.
-            if config.residual_mode == "scaled" and objective(u) > initial_block_objective + early_stop_allowance:
-                continue
+            if config.residual_mode == "scaled":
+                # Test the safeguarded state before ending this block. If
+                # damping invalidates its certificate, continue inner PDHG.
+                guarded = _objective_safeguard(u_start, u, objective, config)
+                checked_primal, checked_dual, _, _ = fixed_point_residuals(guarded[0])
+                if (checked_primal > primal_limit or checked_dual > dual_limit
+                        or _rms(guarded[0]-u) > _scaled_limit(config)*image_scale):
+                    continue
+                accepted_candidate = guarded
             inner_converged = True
             break
 
@@ -558,7 +573,8 @@ def solve_weighted_u_block(
         objective_after,
         accepted_scale,
         safeguarded,
-    ) = _objective_safeguard(u_start, u, objective, config)
+    ) = (accepted_candidate if accepted_candidate is not None
+         else _objective_safeguard(u_start, u, objective, config))
     safeguard_adjustment = _rms(u - raw_candidate)
     safeguard_limit = _residual_limit(
         config.inner_absolute_tolerance,
@@ -568,8 +584,15 @@ def solve_weighted_u_block(
     )
     if config.residual_mode == "scaled":
         safeguard_limit = _scaled_limit(config) * image_scale
+        # Certify the state actually returned after objective backtracking.
+        # These are the two proximal fixed-point equations of the convex
+        # saddle problem, evaluated without modifying either state. A tiny
+        # damped update alone is not a convergence certificate.
+        (primal_residual, dual_residual, raw_primal_residual,
+         raw_dual_residual) = fixed_point_residuals(u)
     returned_converged = (
         inner_converged and safeguard_adjustment <= safeguard_limit
+        and primal_residual <= primal_limit and dual_residual <= dual_limit
     )
 
     return WeightedBlockResult(
@@ -597,6 +620,7 @@ def solve_weighted_u_block(
         # starts even when the primal candidate was relaxed.
         dual=(dual_tv, dual_transport),
         residual_evaluations=residual_evaluations,
+        returned_state_checked=config.residual_mode == "scaled",
     )
 
 
@@ -710,6 +734,15 @@ def solve_weighted_v_block(
     dual_limit = 0.0
     iterate_change = np.inf
     inner_converged = False
+    accepted_candidate = None
+
+    def fixed_point_residuals(value):
+        probe = prox_optical_flow_affine(value - tau*adjoint(dual_tv), u_t, grad_u,
+                                         tau, gradient_norm_squared=grad_norm_squared)
+        probe_tv = project_frobenius_tv_ball(dual_tv + sigma*forward(value), tv_radius)
+        return (_rms((value-probe)/np.array([config.hx,config.hy])),
+                _rms((dual_tv-probe_tv)/tv_radius[..., None, None]),
+                _rms((value-probe)/tau), _rms((dual_tv-probe_tv)/sigma))
 
     objective = lambda candidate: weighted_v_block_objective(
         candidate,
@@ -720,10 +753,6 @@ def solve_weighted_v_block(
         config.hx,
         config.hy,
     )
-    initial_block_objective = objective(v_start) if config.residual_mode == "scaled" else 0.0
-    early_stop_allowance = (config.objective_increase_absolute_tolerance
-        + config.objective_increase_tolerance*max(1.,abs(initial_block_objective)))
-
     for iteration in range(
         1,
         config.max_inner_v_iterations + 1,
@@ -804,11 +833,15 @@ def solve_weighted_v_block(
             and primal_residual <= primal_limit
             and dual_residual <= dual_limit
         ):
-            # A residual-qualified iterate that still increases the block
-            # objective needs more inner work, rather than an early exit that
-            # is subsequently rejected by the safeguard.
-            if config.residual_mode == "scaled" and objective(v) > initial_block_objective + early_stop_allowance:
-                continue
+            if config.residual_mode == "scaled":
+                # Keep extra accuracy work inside this convex block rather
+                # than exhausting outer iterations on an uncertified state.
+                guarded = _objective_safeguard(v_start, v, objective, config)
+                checked_primal, checked_dual, _, _ = fixed_point_residuals(guarded[0])
+                if (checked_primal > primal_limit or checked_dual > dual_limit
+                        or _rms(guarded[0]-v) > _scaled_limit(config)*min(config.hx,config.hy)):
+                    continue
+                accepted_candidate = guarded
             inner_converged = True
             break
 
@@ -819,7 +852,8 @@ def solve_weighted_v_block(
         objective_after,
         accepted_scale,
         safeguarded,
-    ) = _objective_safeguard(v_start, v, objective, config)
+    ) = (accepted_candidate if accepted_candidate is not None
+         else _objective_safeguard(v_start, v, objective, config))
     safeguard_adjustment = _rms(v - raw_candidate)
     safeguard_limit = _residual_limit(
         config.inner_absolute_tolerance,
@@ -829,8 +863,11 @@ def solve_weighted_v_block(
     )
     if config.residual_mode == "scaled":
         safeguard_limit = _scaled_limit(config)*min(config.hx,config.hy)
+        (primal_residual, dual_residual, raw_primal_residual,
+         raw_dual_residual) = fixed_point_residuals(v)
     returned_converged = (
         inner_converged and safeguard_adjustment <= safeguard_limit
+        and primal_residual <= primal_limit and dual_residual <= dual_limit
     )
 
     return WeightedBlockResult(
@@ -858,6 +895,7 @@ def solve_weighted_v_block(
         # when the primal safeguard is active instead of restarting PDHG.
         dual=dual_tv,
         residual_evaluations=residual_evaluations,
+        returned_state_checked=config.residual_mode == "scaled",
     )
 
 
@@ -1008,6 +1046,8 @@ def solve_weighted_tvtv(
             "v_objective_safeguarded": 0.0,
             "u_safeguard_adjustment": 0.0,
             "v_safeguard_adjustment": 0.0,
+            "u_returned_state_checked": 0.0,
+            "v_returned_state_checked": 0.0,
         }
     ]
 
@@ -1221,6 +1261,8 @@ def solve_weighted_tvtv(
             "v_objective_safeguarded": float(v_result.safeguarded),
             "u_safeguard_adjustment": u_result.safeguard_adjustment,
             "v_safeguard_adjustment": v_result.safeguard_adjustment,
+            "u_returned_state_checked": float(u_result.returned_state_checked),
+            "v_returned_state_checked": float(v_result.returned_state_checked),
         }
         history.append(record)
 
