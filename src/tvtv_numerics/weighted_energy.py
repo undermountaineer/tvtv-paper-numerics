@@ -19,6 +19,11 @@ from .weights import (
 Array = NDArray[np.floating]
 
 
+def transport_residual(u: Array, v: Array, ht: float = 1.0, hx: float = 1.0, hy: float = 1.0) -> float:
+    """Mean absolute residual of the optical-flow equation."""
+    return float(np.mean(np.abs(transport_operator(u, v, ht, hx, hy))))
+
+
 def l32_fidelity(
     u: Array,
     f: Array,

@@ -123,68 +123,6 @@ class DyadicCell:
 
         return weights
 
-    def children(
-        self,
-    ) -> tuple["DyadicCell", ...]:
-        """Return the eight children in two space dimensions."""
-        nt_intervals = self.temporal_intervals
-        ny = self.y1 - self.y0
-        nx = self.x1 - self.x0
-
-        if (
-            nt_intervals < 2
-            or nt_intervals % 2 != 0
-        ):
-            raise ValueError(
-                "the cell needs an even number of "
-                "at least two time intervals"
-            )
-
-        if (
-            ny < 2
-            or ny % 2 != 0
-            or nx < 2
-            or nx % 2 != 0
-        ):
-            raise ValueError(
-                "both spatial side lengths must be "
-                "even and at least two"
-            )
-
-        tm = (self.t0 + self.t1) // 2
-        ym = (self.y0 + self.y1) // 2
-        xm = (self.x0 + self.x1) // 2
-
-        time_bounds = (
-            (self.t0, tm),
-            (tm, self.t1),
-        )
-
-        y_bounds = (
-            (self.y0, ym),
-            (ym, self.y1),
-        )
-
-        x_bounds = (
-            (self.x0, xm),
-            (xm, self.x1),
-        )
-
-        return tuple(
-            DyadicCell(
-                level=self.level + 1,
-                t0=ta,
-                t1=tb,
-                y0=ya,
-                y1=yb,
-                x0=xa,
-                x1=xb,
-            )
-            for ta, tb in time_bounds
-            for ya, yb in y_bounds
-            for xa, xb in x_bounds
-        )
-
 
 def assemble_weight_maps(
     data_shape: tuple[int, int, int],

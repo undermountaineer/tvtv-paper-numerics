@@ -2,8 +2,8 @@ import unittest
 
 import numpy as np
 
-from tvtv_numerics.energy import scalar_spatial_tv
 from tvtv_numerics.operators import (
+    spatial_gradient,
     vector_field_gradient,
 )
 from tvtv_numerics.weighted_energy import (
@@ -43,7 +43,7 @@ class TestWeightedEnergy(unittest.TestCase):
                 u,
                 np.full(u.shape, alpha),
             ),
-            alpha * scalar_spatial_tv(u),
+            alpha * np.sum(np.linalg.norm(spatial_gradient(u), axis=-1)),
             places=12,
         )
 

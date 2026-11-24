@@ -138,26 +138,3 @@ def prox_optical_flow_affine(
     result[..., 1] = v_tilde[..., 1] - correction * gy
 
     return result
-
-def project_componentwise_tv_ball(
-    p: Array, radius: ArrayLike
-) -> Array:
-    """Project each velocity component onto its own spatial TV ball."""
-    p = np.asarray(p)
-
-    if p.shape[-2:] != (2, 2):
-        raise ValueError(
-            "the final axes of p must be (component, derivative)"
-        )
-
-    radius_array = _positive_radius(radius)
-    norm = np.linalg.norm(p, axis=-1)
-
-    denominator = (
-        radius_array
-        if radius_array.ndim == 0
-        else radius_array[..., None]
-    )
-
-    scale = np.maximum(1.0, norm / denominator)
-    return p / scale[..., None]

@@ -6,11 +6,15 @@ import unittest
 import numpy as np
 
 from tvtv_numerics.checkpoint_cache import ResumableSolverCache
-from tvtv_numerics.proximal import prox_optical_flow_affine
+from tvtv_numerics.operators import (
+    spatial_gradient, spatial_gradient_adjoint, transport_adjoint, transport_operator,
+)
+from tvtv_numerics.proximal import project_scalar_tv_ball, prox_l32_fidelity, prox_optical_flow_affine
 from tvtv_numerics.weighted_solver import (
-    WeightedTVTVConfig, solve_weighted_tvtv, solve_weighted_u_block,
+    WeightedTVTVConfig, balanced_u_steps, solve_weighted_tvtv, solve_weighted_u_block,
     solve_weighted_v_block,
 )
+from tvtv_numerics.weights import forward_stencil_lower_envelope
 
 
 class TestPerformanceChanges(unittest.TestCase):
@@ -52,28 +56,50 @@ class TestPerformanceChanges(unittest.TestCase):
         initial_v = .01*rng.normal(size=(2, 5, 7, 2))
         alpha = np.full(f.shape, .02); alpha[..., 3:] = .005
         beta = np.full(initial_v.shape[:-1], .03)
-        for mode in ("scaled", "legacy"):
-            config = WeightedTVTVConfig(hx=.2, hy=.3, ht=.5, step_policy="balanced",
-                residual_mode=mode, max_inner_u_iterations=23, max_inner_v_iterations=23,
-                min_inner_iterations=2, inner_tolerance=1e-25, inner_absolute_tolerance=1e-25)
-            sparse = replace(config, inner_check_interval=5)
-            image_dense = solve_weighted_u_block(f, initial_v, alpha, initial_u, config)
-            image_sparse = solve_weighted_u_block(f, initial_v, alpha, initial_u, sparse)
-            motion_dense = solve_weighted_v_block(initial_u, beta, initial_v, config)
-            motion_sparse = solve_weighted_v_block(initial_u, beta, initial_v, sparse)
-            for dense, thin in ((image_dense, image_sparse), (motion_dense, motion_sparse)):
-                self.assertEqual(thin.iterations, 23)
-                self.assertEqual(thin.residual_evaluations, 6)  # 2,7,12,17,22,23
-                self.assertEqual(dense.residual_evaluations, 22)
-                self.assertFalse(thin.converged)
-                np.testing.assert_array_equal(dense.value, thin.value)
-                self.assertEqual(dense.raw_primal_residual, thin.raw_primal_residual)
-                self.assertEqual(dense.raw_dual_residual, thin.raw_dual_residual)
-            np.testing.assert_array_equal(f, initial_u)
+        config = WeightedTVTVConfig(hx=.2, hy=.3, ht=.5, max_inner_u_iterations=23, max_inner_v_iterations=23,
+            min_inner_iterations=2, inner_tolerance=1e-25, inner_absolute_tolerance=1e-25)
+        sparse = replace(config, inner_check_interval=5)
+        image_dense = solve_weighted_u_block(f, initial_v, alpha, initial_u, config)
+        image_sparse = solve_weighted_u_block(f, initial_v, alpha, initial_u, sparse)
+        motion_dense = solve_weighted_v_block(initial_u, beta, initial_v, config)
+        motion_sparse = solve_weighted_v_block(initial_u, beta, initial_v, sparse)
+        for dense, thin in ((image_dense, image_sparse), (motion_dense, motion_sparse)):
+            self.assertEqual(thin.iterations, 23)
+            self.assertEqual(thin.residual_evaluations, 6)  # 2,7,12,17,22,23
+            self.assertEqual(dense.residual_evaluations, 22)
+            self.assertFalse(thin.converged)
+            np.testing.assert_array_equal(dense.value, thin.value)
+            self.assertEqual(dense.raw_primal_residual, thin.raw_primal_residual)
+            self.assertEqual(dense.raw_dual_residual, thin.raw_dual_residual)
+        np.testing.assert_array_equal(f, initial_u)
+
+    def test_carried_operator_values_match_explicit_pdhg(self):
+        # The solver forms K ubar from carried K u values; explicit PDHG must give the same duals.
+        rng = np.random.default_rng(187)
+        f = .4+.05*rng.normal(size=(3, 5, 7))
+        v = .01*rng.normal(size=(2, 5, 7, 2))
+        alpha = np.full(f.shape, .02); alpha[..., 3:] = .005
+        config = WeightedTVTVConfig(hx=.2, hy=.3, ht=.5, max_inner_u_iterations=17, min_inner_iterations=2,
+                                    inner_tolerance=1e-25, inner_absolute_tolerance=1e-25)
+        result = solve_weighted_u_block(f, v, alpha, f, config)
+        tau, sigma_tv, sigma_transport, _ = balanced_u_steps(v, f.shape, config)
+        radius = forward_stencil_lower_envelope(alpha)
+        h = (config.ht, config.hx, config.hy)
+        u = u_bar = f
+        p, q = np.zeros((*f.shape, 2)), np.zeros(v.shape[:-1])
+        for _ in range(17):
+            p = project_scalar_tv_ball(p + sigma_tv*spatial_gradient(u_bar, config.hx, config.hy), radius)
+            q = np.clip(q + sigma_transport*transport_operator(u_bar, v, *h), -config.kappa, config.kappa)
+            gradient = spatial_gradient_adjoint(p, config.hx, config.hy) + transport_adjoint(q, v, 3, *h)
+            u, u_old = prox_l32_fidelity(u - tau*gradient, f, tau), u
+            u_bar = u + config.theta*(u - u_old)
+        self.assertEqual(result.iterations, 17)
+        np.testing.assert_allclose(result.dual[0], p, rtol=1e-10, atol=1e-13)
+        np.testing.assert_allclose(result.dual[1], q, rtol=1e-10, atol=1e-13)
 
     def test_check_at_cap_below_minimum_is_reported_without_false_convergence(self):
         config = WeightedTVTVConfig(min_inner_iterations=10, max_inner_u_iterations=3,
-                                    inner_check_interval=5, step_policy="balanced", residual_mode="scaled")
+                                    inner_check_interval=5)
         f = np.full((3, 4, 4), .4)
         result = solve_weighted_u_block(f, np.zeros((2, 4, 4, 2)), np.full(f.shape, .02), f, config)
         self.assertEqual(result.residual_evaluations, 1)
@@ -84,7 +110,7 @@ class TestPerformanceChanges(unittest.TestCase):
         rng = np.random.default_rng(186)
         f = .4+.05*rng.normal(size=(3, 4, 6))
         alpha, beta = np.full(f.shape, .02), np.full((2, 4, 6), .03)
-        config = WeightedTVTVConfig(step_policy="balanced", residual_mode="scaled", update_order="u_then_v",
+        config = WeightedTVTVConfig(update_order="u_then_v",
             inner_check_interval=5, max_outer_iterations=5, max_inner_u_iterations=23,
             max_inner_v_iterations=23, min_inner_iterations=2, inner_tolerance=1e-12, outer_tolerance=1e-12)
         whole = solve_weighted_tvtv(f, alpha, beta, config)

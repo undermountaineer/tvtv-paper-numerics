@@ -12,7 +12,7 @@ import zipfile
 
 import numpy as np
 
-from .checkpoint_cache import scientific_code_id
+from .checkpoint_cache import scientific_code_id, source_id
 from .data import Sequence, add_noise, estimate_translation, load_sequence, save_sequence
 from .dyadic import DyadicCell, assemble_weight_maps
 from .minimal_phantom import region_masks
@@ -88,11 +88,10 @@ class Original1024(Experiment):
         master_hash = hashlib.sha256(self.master.read_bytes()).hexdigest()
         if master_hash != ds["master_sha256"]:
             raise ValueError("Master checksum differs: use the original 1024 bundle or explicitly change the protocol.")
-        source = Path(__file__).parent
         identity = dict(protocol="original_1024_quadtree_v1", settings=self.settings,
                         master_sha256=master_hash, solver_source=scientific_code_id(),
-                        workflow_source=hashlib.sha256(b"".join((source/name).read_bytes() for name in
-                            ("original_1024.py", "data.py", "minimal_phantom.py", "metrics.py", "workflow.py", "dyadic.py"))).hexdigest())
+                        workflow_source=source_id(("original_1024.py", "data.py", "minimal_phantom.py",
+                                                   "metrics.py", "workflow.py", "dyadic.py")))
         self.token = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
         self.base = self.root/"results/synthetic_original_1024"
         self.out = self.base/self.token

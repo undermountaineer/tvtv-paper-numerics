@@ -2,43 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from functools import lru_cache
 import hashlib
 import json
-from dataclasses import asdict
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .energy import transport_residual
 from .operators import (
-    dt_forward,
-    dx_central,
-    dy_central,
-    estimate_operator_norm_squared,
-    spatial_gradient,
-    spatial_gradient_adjoint,
-    transport_adjoint,
-    transport_operator,
-    vector_field_gradient,
-    vector_field_gradient_adjoint,
+    dt_forward, dx_central, dy_central, spatial_gradient, spatial_gradient_adjoint,
+    transport_adjoint, transport_operator, vector_field_gradient, vector_field_gradient_adjoint,
 )
 from .proximal import (
-    project_frobenius_tv_ball,
-    project_scalar_tv_ball,
-    prox_l32_fidelity,
-    prox_optical_flow_affine,
+    project_frobenius_tv_ball, project_scalar_tv_ball, prox_l32_fidelity, prox_optical_flow_affine,
 )
 from .weighted_energy import (
-    manuscript_energy,
-    weighted_u_block_objective,
-    weighted_v_block_objective,
+    manuscript_energy, transport_residual, weighted_u_block_objective, weighted_v_block_objective,
 )
-from .weights import (
-    forward_stencil_lower_envelope,
-    validate_weight_map,
-)
+from .weights import forward_stencil_lower_envelope, validate_weight_map
 
 
 Array = NDArray[np.floating]
@@ -56,12 +38,11 @@ class WeightedTVTVConfig:
     max_inner_u_iterations: int = 400
     max_inner_v_iterations: int = 400
     min_inner_iterations: int = 10
-    # One preserves the existing stopping schedule. Larger intervals are
-    # explicit opt-ins; the first eligible and final iterates are always checked.
+    # Residuals reuse K x and K* p, so checking every eligible iterate is cheap.
+    # Larger intervals can change the stopping iterate.
     inner_check_interval: int = 1
 
-    # The legacy tolerance names are retained as relative tolerances.  The
-    # absolute terms make the tests independent of the number of pixels.
+    # Scaled inner limit: inner_absolute_tolerance + inner_tolerance.
     inner_tolerance: float = 1.0e-5
     inner_absolute_tolerance: float = 1.0e-7
     outer_tolerance: float = 1.0e-4
@@ -73,123 +54,72 @@ class WeightedTVTVConfig:
 
     theta: float = 1.0
     step_safety: float = 0.90
-    norm_iterations: int = 40
+    balanced_u_step: float = 0.1
     update_order: str = "v_then_u"
 
     objective_increase_tolerance: float = 1.0e-8
     objective_increase_absolute_tolerance: float = 1.0e-10
     max_objective_backtracks: int = 12
 
-    # Explicit opt-in keeps older experiments on their original policy.
-    step_policy: str = "legacy"
-    residual_mode: str = "legacy"
-    balanced_u_step: float = 0.1
-
     verbose: bool = False
 
     def __post_init__(self) -> None:
         positive = (
-            self.kappa,
-            self.balanced_u_step,
-            self.hx,
-            self.hy,
-            self.ht,
-            self.inner_tolerance,
-            self.inner_absolute_tolerance,
-            self.outer_tolerance,
-            self.outer_absolute_tolerance,
-            self.outer_energy_tolerance,
-            self.outer_energy_absolute_tolerance,
-            self.step_safety,
-            self.objective_increase_tolerance,
-            self.objective_increase_absolute_tolerance,
+            self.kappa, self.balanced_u_step, self.hx, self.hy, self.ht,
+            self.inner_tolerance, self.inner_absolute_tolerance,
+            self.outer_tolerance, self.outer_absolute_tolerance,
+            self.outer_energy_tolerance, self.outer_energy_absolute_tolerance,
+            self.objective_increase_tolerance, self.objective_increase_absolute_tolerance,
         )
-
         if min(positive) <= 0.0:
-            raise ValueError(
-                "parameters, spacings, tolerances, and "
-                "safety must be positive"
-            )
-
+            raise ValueError("parameters, spacings and tolerances must be positive")
         if not 0.0 < self.step_safety < 1.0:
-            raise ValueError(
-                "step_safety must lie strictly between "
-                "zero and one"
-            )
-
+            raise ValueError("step_safety must lie strictly between zero and one")
         if not 0.0 <= self.theta <= 1.0:
-            raise ValueError(
-                "theta must lie between zero and one"
-            )
-
+            raise ValueError("theta must lie between zero and one")
         counts = (
-            self.max_outer_iterations,
-            self.max_inner_u_iterations,
-            self.max_inner_v_iterations,
-            self.min_inner_iterations,
-            self.norm_iterations,
-            self.required_outer_successes,
-            self.max_objective_backtracks,
+            self.max_outer_iterations, self.max_inner_u_iterations, self.max_inner_v_iterations,
+            self.min_inner_iterations, self.required_outer_successes, self.max_objective_backtracks,
         )
-
         if min(counts) < 1:
-            raise ValueError(
-                "iteration counts must be positive"
-            )
-
+            raise ValueError("iteration counts must be positive")
         if type(self.inner_check_interval) is not int or self.inner_check_interval < 1:
             raise ValueError("inner_check_interval must be a positive integer")
-
         if self.outer_velocity_tolerance_pixels is not None and self.outer_velocity_tolerance_pixels <= 0:
             raise ValueError("outer_velocity_tolerance_pixels must be positive")
-
-        if self.step_policy not in {"legacy", "balanced"}:
-            raise ValueError("step_policy must be legacy or balanced")
-        if self.residual_mode not in {"legacy", "scaled"}:
-            raise ValueError("residual_mode must be legacy or scaled")
-
         if self.update_order not in {"v_then_u", "u_then_v"}:
-            raise ValueError(
-                "update_order must be 'v_then_u' or 'u_then_v'"
-            )
+            raise ValueError("update_order must be 'v_then_u' or 'u_then_v'")
 
 
 @dataclass
 class WeightedBlockResult:
     value: Array
-    iterations: int
-    residual: float
+    dual: Array | tuple[Array, ...]
     converged: bool
-    raw_primal_residual: float = np.inf
-    raw_dual_residual: float = np.inf
-    primal_step_size: float = np.nan
-    dual_tv_step_size: float = np.nan
-    dual_transport_step_size: float = 0.0
-    step_stability_bound: float = np.nan
-    primal_residual: float = np.inf
-    dual_residual: float = np.inf
-    primal_residual_limit: float = np.inf
-    dual_residual_limit: float = np.inf
-    iterate_change: float = np.inf
-    objective_before: float = np.nan
-    objective_after: float = np.nan
-    accepted_step_scale: float = 1.0
-    step_size: float = np.nan
-    norm_squared: float = np.nan
-    safeguarded: bool = False
-    safeguard_adjustment: float = 0.0
-    dual: Array | tuple[Array, Array] | None = None
-    residual_evaluations: int = 0
-    returned_state_checked: bool = False
+    iterations: int
+    residual_evaluations: int
+    # Scaled and raw fixed-point defects of the returned (safeguarded) state.
+    residual: float
+    primal_residual: float
+    dual_residual: float
+    residual_limit: float
+    raw_primal_residual: float
+    raw_dual_residual: float
+    iterate_change: float
+    objective_before: float
+    objective_after: float
+    accepted_step_scale: float
+    safeguarded: bool
+    safeguard_adjustment: float
+    primal_step_size: float
+    dual_step_sizes: tuple[float, ...]
 
 
 @dataclass
 class WeightedTVTVResult:
     u: Array
     v: Array
-    history: list[dict[str, float]] = field(
-        default_factory=list
-    )
+    history: list[dict[str, float]] = field(default_factory=list)
     outer_iterations: int = 0
     converged: bool = False
     stop_reason: str = "maximum_outer_iterations"
@@ -198,36 +128,18 @@ class WeightedTVTVResult:
 
 def _rms(value: Array) -> float:
     array = np.asarray(value, dtype=float)
-    if array.size == 0:
-        return 0.0
-    return float(np.sqrt(np.mean(array * array)))
+    return float(np.sqrt(np.vdot(array, array) / array.size)) if array.size else 0.0
 
 
-def _combined_rms(values: tuple[Array, ...]) -> float:
-    total_size = sum(np.asarray(value).size for value in values)
-    if total_size == 0:
-        return 0.0
-    total = sum(
-        float(np.sum(value * value))
-        for value in values
-    )
-    return float(np.sqrt(total / total_size))
+def _combined_rms(values) -> float:
+    arrays = [np.asarray(value, dtype=float) for value in values]
+    size = sum(array.size for array in arrays)
+    return float(np.sqrt(sum(np.vdot(a, a) for a in arrays) / size)) if size else 0.0
 
 
 def _relative_rms_change(new: Array, old: Array) -> float:
     scale = max(_rms(new), _rms(old), np.finfo(float).eps)
     return float(_rms(new - old) / scale)
-
-
-def _residual_limit(
-    absolute_tolerance: float,
-    relative_tolerance: float,
-    *scales: float,
-) -> float:
-    return float(
-        absolute_tolerance
-        + relative_tolerance * max(0.0, *scales)
-    )
 
 
 @lru_cache(maxsize=128)
@@ -237,17 +149,9 @@ def spatial_norm_squared(ny: int, nx: int, hx: float, hy: float) -> float:
     Velocity components and temporal copies do not change this norm. This
     fixed quantity is shared by all outer iterations, parameters and cells.
     """
-    lx = 0.0 if nx == 1 else 4*np.cos(np.pi/(2*nx))**2/hx**2
-    ly = 0.0 if ny == 1 else 4*np.cos(np.pi/(2*ny))**2/hy**2
+    lx = 0.0 if nx == 1 else 4 * np.cos(np.pi / (2 * nx)) ** 2 / hx**2
+    ly = 0.0 if ny == 1 else 4 * np.cos(np.pi / (2 * ny)) ** 2 / hy**2
     return float(lx + ly)
-
-
-@lru_cache(maxsize=128)
-def _legacy_velocity_norm(shape, hx, hy, iterations):
-    return estimate_operator_norm_squared(
-        lambda x: vector_field_gradient(x, hx, hy),
-        lambda y: vector_field_gradient_adjoint(y, hx, hy),
-        shape, iterations=iterations)
 
 
 def balanced_u_steps(v, shape, config):
@@ -258,17 +162,13 @@ def balanced_u_steps(v, shape, config):
     dual step, so the existing Euclidean projection remains its exact prox.
     """
     spatial = spatial_norm_squared(shape[1], shape[2], config.hx, config.hy)
-    transport = (2/config.ht + np.max(np.abs(v[...,0]))/config.hx
-                 + np.max(np.abs(v[...,1]))/config.hy)**2
+    transport = (2 / config.ht + np.max(np.abs(v[..., 0])) / config.hx
+                 + np.max(np.abs(v[..., 1])) / config.hy) ** 2
     tau = config.balanced_u_step
     budget = config.step_safety**2
-    sigma_tv = budget/(2*tau*max(spatial,1e-12))
-    sigma_transport = budget/(2*tau*max(transport,1e-12))
-    return tau, sigma_tv, sigma_transport, float(spatial+transport)
-
-
-def _scaled_limit(config):
-    return config.inner_absolute_tolerance + config.inner_tolerance
+    sigma_tv = budget / (2 * tau * max(spatial, 1e-12))
+    sigma_transport = budget / (2 * tau * max(transport, 1e-12))
+    return tau, sigma_tv, sigma_transport, float(spatial + transport)
 
 
 def _inner_residual_due(iteration, maximum, config):
@@ -278,21 +178,12 @@ def _inner_residual_due(iteration, maximum, config):
     )
 
 
-def _objective_safeguard(
-    initial: Array,
-    candidate: Array,
-    objective,
-    config: WeightedTVTVConfig,
-) -> tuple[Array, float, float, float, bool]:
+def _objective_safeguard(initial: Array, candidate: Array, objective, config: WeightedTVTVConfig):
     """Backtrack an inexact block step until its objective is nonincreasing."""
     objective_before = float(objective(initial))
     objective_after = float(objective(candidate))
-    tolerance = (
-        config.objective_increase_absolute_tolerance
-        + config.objective_increase_tolerance
-        * max(1.0, abs(objective_before))
-    )
-
+    tolerance = (config.objective_increase_absolute_tolerance
+                 + config.objective_increase_tolerance * max(1.0, abs(objective_before)))
     if objective_after <= objective_before + tolerance:
         return candidate, objective_before, objective_after, 1.0, False
 
@@ -308,595 +199,200 @@ def _objective_safeguard(
     return initial.copy(), objective_before, objective_before, 0.0, True
 
 
-def solve_weighted_u_block(
-    f: Array,
-    v: Array,
-    alpha_weight: Array,
-    initial_u: Array,
-    config: WeightedTVTVConfig,
-    initial_dual: tuple[Array, Array] | None = None,
-) -> WeightedBlockResult:
-    """Solve the weighted image subproblem for fixed velocity."""
+def _initial_duals(initial, shapes):
+    if initial is None:
+        return tuple(np.zeros(shape) for shape in shapes)
+    duals = tuple(np.asarray(dual, dtype=float) for dual in initial)
+    if tuple(dual.shape for dual in duals) != tuple(shapes):
+        raise ValueError("initial_dual has incompatible shapes")
+    return duals
+
+
+def _pdhg_block(x, duals, *, forward, adjoint, prox_primal, prox_duals, tau, sigmas,
+                primal_scale, dual_scales, objective, max_iterations, config) -> WeightedBlockResult:
+    """PDHG for min_x G(x) + sum_i F_i(K_i x), with one dual step per block.
+
+    K x and K* p are carried between iterations, so the incremental residuals
+    need no extra operator applications: K xbar_k = (1+theta) K x_k - theta K x_{k-1}.
+    A residual-qualified iterate is safeguarded against objective increase.
+    The block stops only if the proximal fixed-point defects of that
+    safeguarded state pass; otherwise PDHG continues from the raw iterate.
+    Defects are scaled by primal_scale and by the dual ball radii.
+    """
+    x_start = x
+    kx = kx_bar = forward(x)
+    kty = adjoint(duals)
+    limit = config.inner_absolute_tolerance + config.inner_tolerance
+    adjustment_limit = limit * float(np.min(primal_scale))
+    residual_evaluations = 0
+    iterate_change = np.inf
+    accepted = None
+
+    def fixed_point_defects(value):
+        """Scaled and raw defects of x = prox(x - tau K*p), p = prox(p + sigma K x)."""
+        probe = prox_primal(value - tau * kty, tau)
+        kv = kx if value is x else forward(value)
+        probe_duals = prox_duals(tuple(p + s * k for p, s, k in zip(duals, sigmas, kv)))
+        gaps = [p - q for p, q in zip(duals, probe_duals)]
+        return (_rms((value - probe) / primal_scale),
+                max(_rms(g / d) for g, d in zip(gaps, dual_scales)),
+                _rms((value - probe) / tau),
+                _combined_rms([g / s for g, s in zip(gaps, sigmas)]))
+
+    for iteration in range(1, max_iterations + 1):
+        x_old, duals_old, kx_old, kty_old = x, duals, kx, kty
+        duals = prox_duals(tuple(p + s * k for p, s, k in zip(duals, sigmas, kx_bar)))
+        kty = adjoint(duals)
+        x = prox_primal(x - tau * kty, tau)
+        kx = forward(x)
+        kx_bar = tuple(k + config.theta * (k - k_old) for k, k_old in zip(kx, kx_old))
+
+        if not _inner_residual_due(iteration, max_iterations, config):
+            continue
+        residual_evaluations += 1
+        primal_gap = (x_old - x) / tau - (kty_old - kty)
+        dual_gaps = [(p_old - p) / s - (k_old - k)
+                     for p_old, p, s, k_old, k in zip(duals_old, duals, sigmas, kx_old, kx)]
+        primal_residual = _rms(tau * primal_gap / primal_scale)
+        dual_residual = max(_rms(s * g / d) for s, g, d in zip(sigmas, dual_gaps, dual_scales))
+        iterate_change = _relative_rms_change(x, x_old)
+        if iteration < config.min_inner_iterations or primal_residual > limit or dual_residual > limit:
+            continue
+        guarded = _objective_safeguard(x_start, x, objective, config)
+        defects = fixed_point_defects(guarded[0])
+        if defects[0] <= limit and defects[1] <= limit and _rms(guarded[0] - x) <= adjustment_limit:
+            accepted = guarded, defects
+            break
+
+    if accepted is None:
+        guarded = _objective_safeguard(x_start, x, objective, config)
+        defects = fixed_point_defects(guarded[0])
+    else:
+        guarded, defects = accepted
+    value, objective_before, objective_after, scale, safeguarded = guarded
+    primal_residual, dual_residual, raw_primal_residual, raw_dual_residual = defects
+    return WeightedBlockResult(
+        value=value,
+        # Duals stay feasible after projection; keep them as warm starts even
+        # when the primal candidate was damped.
+        dual=duals,
+        converged=accepted is not None,
+        iterations=iteration,
+        residual_evaluations=residual_evaluations,
+        residual=max(primal_residual, dual_residual),
+        primal_residual=primal_residual,
+        dual_residual=dual_residual,
+        residual_limit=limit,
+        raw_primal_residual=raw_primal_residual,
+        raw_dual_residual=raw_dual_residual,
+        iterate_change=iterate_change,
+        objective_before=objective_before,
+        objective_after=objective_after,
+        accepted_step_scale=scale,
+        safeguarded=safeguarded,
+        safeguard_adjustment=_rms(value - x),
+        primal_step_size=tau,
+        dual_step_sizes=tuple(sigmas),
+    )
+
+
+def solve_weighted_u_block(f, v, alpha_weight, initial_u, config, initial_dual=None) -> WeightedBlockResult:
+    """Solve the weighted image subproblem for fixed velocity.
+
+    Duals: (spatial TV, transport). Primal defects are scaled by the
+    observation RMS (at least 0.1), dual defects by alpha and kappa.
+    """
     f = np.asarray(f, dtype=float)
     v = np.asarray(v, dtype=float)
-    u = np.asarray(
-        initial_u,
-        dtype=float,
-    ).copy()
-
+    u = np.asarray(initial_u, dtype=float)
     if u.shape != f.shape or u.ndim != 3:
-        raise ValueError(
-            "initial_u and f must have shape (nt, ny, nx)"
-        )
+        raise ValueError("initial_u and f must have shape (nt, ny, nx)")
+    if v.shape != (f.shape[0] - 1, *f.shape[1:], 2):
+        raise ValueError("v must have shape (nt-1, ny, nx, 2)")
 
-    expected_v_shape = (
-        f.shape[0] - 1,
-        *f.shape[1:],
-        2,
-    )
-
-    if v.shape != expected_v_shape:
-        raise ValueError(
-            "v must have shape (nt-1, ny, nx, 2)"
-        )
-
-    raw_alpha = validate_weight_map(
-        alpha_weight,
-        f.shape,
-        "alpha_weight",
-    )
-
+    raw_alpha = validate_weight_map(alpha_weight, f.shape, "alpha_weight")
     alpha = forward_stencil_lower_envelope(raw_alpha)
+    hx, hy, ht, kappa = config.hx, config.hy, config.ht, config.kappa
+    tau, sigma_tv, sigma_transport, _ = balanced_u_steps(v, u.shape, config)
 
-    def forward(
-        x: Array,
-    ) -> tuple[Array, Array]:
-        return (
-            spatial_gradient(
-                x,
-                config.hx,
-                config.hy,
-            ),
-            transport_operator(
-                x,
-                v,
-                config.ht,
-                config.hx,
-                config.hy,
-            ),
-        )
-
-    def adjoint(
-        y: tuple[Array, Array],
-    ) -> Array:
-        return (
-            spatial_gradient_adjoint(
-                y[0],
-                config.hx,
-                config.hy,
-            )
-            + transport_adjoint(
-                y[1],
-                v,
-                nt=f.shape[0],
-                ht=config.ht,
-                hx=config.hx,
-                hy=config.hy,
-            )
-        )
-
-    if config.step_policy == "balanced":
-        tau, sigma_tv, sigma_transport, norm_squared = balanced_u_steps(v,u.shape,config)
-        step = tau
-        stability = config.step_safety**2
-    else:
-        norm_squared = max(1e-12, 1.05*estimate_operator_norm_squared(
-            forward, adjoint, u.shape, iterations=config.norm_iterations))
-        step = config.step_safety/np.sqrt(norm_squared)
-        tau = sigma_tv = sigma_transport = step
-        stability = tau*sigma_tv*norm_squared
-
-    dual_tv_shape = (*u.shape, 2)
-    dual_transport_shape = v.shape[:-1]
-    if initial_dual is None:
-        dual_tv = np.zeros(dual_tv_shape, dtype=float)
-        dual_transport = np.zeros(dual_transport_shape, dtype=float)
-    else:
-        dual_tv = np.asarray(initial_dual[0], dtype=float).copy()
-        dual_transport = np.asarray(initial_dual[1], dtype=float).copy()
-        if (
-            dual_tv.shape != dual_tv_shape
-            or dual_transport.shape != dual_transport_shape
-        ):
-            raise ValueError("initial_dual has incompatible shapes")
-
-    u_start = u.copy()
-    u_bar = u.copy()
-    primal_residual = np.inf
-    dual_residual = np.inf
-    primal_limit = 0.0
-    dual_limit = 0.0
-    iterate_change = np.inf
-    inner_converged = False
-    accepted_candidate = None
-
-    image_scale = max(_rms(f), 0.1)
-    residual_evaluations = 0
-
-    def fixed_point_residuals(value):
-        probe = prox_l32_fidelity(value - tau*adjoint((dual_tv, dual_transport)), f, tau)
-        ku_tv, ku_transport = forward(value)
-        probe_tv = project_scalar_tv_ball(dual_tv + sigma_tv*ku_tv, alpha)
-        probe_transport = np.clip(dual_transport + sigma_transport*ku_transport,
-                                  -config.kappa, config.kappa)
-        return (_rms(value-probe)/image_scale,
-                max(_rms((dual_tv-probe_tv)/alpha[..., None]),
-                    _rms((dual_transport-probe_transport)/config.kappa)),
-                _rms((value-probe)/tau),
-                _combined_rms(((dual_tv-probe_tv)/sigma_tv,
-                               (dual_transport-probe_transport)/sigma_transport)))
-
-    objective = lambda candidate: weighted_u_block_objective(
-        candidate,
-        f,
-        v,
-        raw_alpha,  # Objective evaluation applies the stencil envelope itself.
-        config.kappa,
-        config.ht,
-        config.hx,
-        config.hy,
-    )
-    for iteration in range(
-        1,
-        config.max_inner_u_iterations + 1,
-    ):
-        # Updates below allocate new primal/dual arrays, so these references
-        # remain the preceding iterate without an additional full-array copy.
-        old_u = u
-        old_dual_tv = dual_tv
-        old_dual_transport = dual_transport
-
-        dual_tv = project_scalar_tv_ball(
-            dual_tv
-            + sigma_tv
-            * spatial_gradient(
-                u_bar,
-                config.hx,
-                config.hy,
-            ),
-            alpha,
-        )
-
-        dual_transport = np.clip(
-            dual_transport
-            + sigma_transport
-            * transport_operator(
-                u_bar,
-                v,
-                config.ht,
-                config.hx,
-                config.hy,
-            ),
-            -config.kappa,
-            config.kappa,
-        )
-
-        gradient = spatial_gradient_adjoint(
-            dual_tv,
-            config.hx,
-            config.hy,
-        )
-
-        gradient += transport_adjoint(
-            dual_transport,
-            v,
-            nt=f.shape[0],
-            ht=config.ht,
-            hx=config.hx,
-            hy=config.hy,
-        )
-
-        u = prox_l32_fidelity(
-            u - tau * gradient,
-            f,
-            tau,
-        )
-
-        u_bar = (
-            u
-            + config.theta * (u - old_u)
-        )
-
-        if not _inner_residual_due(iteration, config.max_inner_u_iterations, config):
-            continue
-        residual_evaluations += 1
-
-        delta_u = old_u - u
-        delta_duals = (
-            old_dual_tv - dual_tv,
-            old_dual_transport - dual_transport,
-        )
-        adjoint_delta_duals = adjoint(delta_duals)
-        forward_delta_u = forward(delta_u)
-
-        primal_residual_array = (
-            delta_u / tau - adjoint_delta_duals
-        )
-        dual_residual_arrays = (
-            delta_duals[0] / sigma_tv - forward_delta_u[0],
-            delta_duals[1] / sigma_transport - forward_delta_u[1],
-        )
-
-        primal_residual = _rms(primal_residual_array)
-        dual_residual = _combined_rms(dual_residual_arrays)
-        raw_primal_residual, raw_dual_residual = primal_residual, dual_residual
-        if config.residual_mode == "scaled":
-            primal_residual = tau * raw_primal_residual / image_scale
-            dual_residual = max(
-                _rms(sigma_tv*dual_residual_arrays[0]/alpha[...,None]),
-                _rms(sigma_transport*dual_residual_arrays[1]/config.kappa))
-            primal_limit = dual_limit = _scaled_limit(config)
-        else:
-            primal_limit = _residual_limit(
-                config.inner_absolute_tolerance, config.inner_tolerance,
-                _rms(delta_u / tau), _rms(adjoint_delta_duals),
-            )
-            dual_limit = _residual_limit(
-                config.inner_absolute_tolerance, config.inner_tolerance,
-                _combined_rms((delta_duals[0] / sigma_tv, delta_duals[1] / sigma_transport)),
-                _combined_rms(forward_delta_u),
-            )
-        iterate_change = _relative_rms_change(u, old_u)
-
-        if (
-            iteration
-            >= config.min_inner_iterations
-            and primal_residual <= primal_limit
-            and dual_residual <= dual_limit
-        ):
-            if config.residual_mode == "scaled":
-                # Test the safeguarded state before ending this block. If
-                # damping invalidates its certificate, continue inner PDHG.
-                guarded = _objective_safeguard(u_start, u, objective, config)
-                checked_primal, checked_dual, _, _ = fixed_point_residuals(guarded[0])
-                if (checked_primal > primal_limit or checked_dual > dual_limit
-                        or _rms(guarded[0]-u) > _scaled_limit(config)*image_scale):
-                    continue
-                accepted_candidate = guarded
-            inner_converged = True
-            break
-
-    raw_candidate = u.copy()
-    (
-        u,
-        objective_before,
-        objective_after,
-        accepted_scale,
-        safeguarded,
-    ) = (accepted_candidate if accepted_candidate is not None
-         else _objective_safeguard(u_start, u, objective, config))
-    safeguard_adjustment = _rms(u - raw_candidate)
-    safeguard_limit = _residual_limit(
-        config.inner_absolute_tolerance,
-        config.inner_tolerance,
-        _rms(u),
-        _rms(raw_candidate),
-    )
-    if config.residual_mode == "scaled":
-        safeguard_limit = _scaled_limit(config) * image_scale
-        # Certify the state actually returned after objective backtracking.
-        # These are the two proximal fixed-point equations of the convex
-        # saddle problem, evaluated without modifying either state. A tiny
-        # damped update alone is not a convergence certificate.
-        (primal_residual, dual_residual, raw_primal_residual,
-         raw_dual_residual) = fixed_point_residuals(u)
-    returned_converged = (
-        inner_converged and safeguard_adjustment <= safeguard_limit
-        and primal_residual <= primal_limit and dual_residual <= dual_limit
-    )
-
-    return WeightedBlockResult(
-        value=u,
-        iterations=iteration,
-        residual=max(primal_residual, dual_residual),
-        converged=returned_converged,
-        primal_residual=primal_residual,
-        dual_residual=dual_residual,
-        primal_residual_limit=primal_limit,
-        dual_residual_limit=dual_limit,
-        iterate_change=iterate_change,
-        objective_before=objective_before,
-        objective_after=objective_after,
-        accepted_step_scale=accepted_scale,
-        step_size=step,
-        raw_primal_residual=raw_primal_residual,
-        raw_dual_residual=raw_dual_residual,
-        primal_step_size=tau, dual_tv_step_size=sigma_tv,
-        dual_transport_step_size=sigma_transport, step_stability_bound=stability,
-        norm_squared=norm_squared,
-        safeguarded=safeguarded,
-        safeguard_adjustment=safeguard_adjustment,
-        # Both duals remain feasible after projection and are useful warm
-        # starts even when the primal candidate was relaxed.
-        dual=(dual_tv, dual_transport),
-        residual_evaluations=residual_evaluations,
-        returned_state_checked=config.residual_mode == "scaled",
+    return _pdhg_block(
+        u, _initial_duals(initial_dual, ((*u.shape, 2), v.shape[:-1])),
+        forward=lambda x: (spatial_gradient(x, hx, hy), transport_operator(x, v, ht, hx, hy)),
+        adjoint=lambda p: (spatial_gradient_adjoint(p[0], hx, hy)
+                           + transport_adjoint(p[1], v, f.shape[0], ht, hx, hy)),
+        prox_primal=lambda z, t: prox_l32_fidelity(z, f, t),
+        prox_duals=lambda p: (project_scalar_tv_ball(p[0], alpha), np.clip(p[1], -kappa, kappa)),
+        tau=tau,
+        sigmas=(sigma_tv, sigma_transport),
+        primal_scale=max(_rms(f), 0.1),
+        dual_scales=(alpha[..., None], kappa),
+        # Objective evaluation applies the stencil envelope itself.
+        objective=lambda x: weighted_u_block_objective(x, f, v, raw_alpha, kappa, ht, hx, hy),
+        max_iterations=config.max_inner_u_iterations,
+        config=config,
     )
 
 
-def solve_weighted_v_block(
-    u: Array,
-    beta_weight: Array,
-    initial_v: Array,
-    config: WeightedTVTVConfig,
-    initial_dual: Array | None = None,
-) -> WeightedBlockResult:
-    """Solve the weighted velocity subproblem for fixed image."""
+def solve_weighted_v_block(u, beta_weight, initial_v, config, initial_dual=None) -> WeightedBlockResult:
+    """Solve the weighted velocity subproblem for fixed image.
+
+    Primal defects are scaled by the pixel spacing, dual defects by beta/kappa.
+    """
     u = np.asarray(u, dtype=float)
-    v = np.asarray(
-        initial_v,
-        dtype=float,
-    ).copy()
+    v = np.asarray(initial_v, dtype=float)
+    if u.ndim != 3 or v.shape != (u.shape[0] - 1, *u.shape[1:], 2):
+        raise ValueError("u must be (nt, ny, nx) and v must be (nt-1, ny, nx, 2)")
 
-    expected_shape = (
-        u.shape[0] - 1,
-        *u.shape[1:],
-        2,
-    )
-
-    if (
-        u.ndim != 3
-        or v.shape != expected_shape
-    ):
-        raise ValueError(
-            "u must be (nt, ny, nx) and "
-            "v must be (nt-1, ny, nx, 2)"
-        )
-
-    raw_beta = validate_weight_map(
-        beta_weight,
-        v.shape[:-1],
-        "beta_weight",
-    )
-
-    beta = forward_stencil_lower_envelope(raw_beta)
-
-    def forward(
-        x: Array,
-    ) -> Array:
-        return vector_field_gradient(
-            x,
-            config.hx,
-            config.hy,
-        )
-
-    def adjoint(
-        y: Array,
-    ) -> Array:
-        return vector_field_gradient_adjoint(
-            y,
-            config.hx,
-            config.hy,
-        )
-
+    raw_beta = validate_weight_map(beta_weight, v.shape[:-1], "beta_weight")
+    hx, hy, ht, kappa = config.hx, config.hy, config.ht, config.kappa
     # Dividing the v-subproblem by kappa does not change its minimizer.
-    tv_radius = beta / config.kappa
-    if config.step_policy == "balanced":
-        norm_squared = max(1e-12, spatial_norm_squared(
-            u.shape[1],u.shape[2],config.hx,config.hy))
-        step = config.step_safety/np.sqrt(norm_squared)
-        # Balance physical displacement (one pixel) against the dual TV radius.
-        balance = min(config.hx,config.hy)/float(np.median(tv_radius))
-        tau, sigma = step*balance, step/balance
-    else:
-        norm_squared = max(1e-12,1.05*_legacy_velocity_norm(
-            v.shape,config.hx,config.hy,config.norm_iterations))
-        step = config.step_safety/np.sqrt(norm_squared)
-        tau = sigma = step
+    tv_radius = forward_stencil_lower_envelope(raw_beta) / kappa
+    step = config.step_safety / np.sqrt(max(1e-12, spatial_norm_squared(u.shape[1], u.shape[2], hx, hy)))
+    # Balance physical displacement (one pixel) against the dual TV radius.
+    balance = min(hx, hy) / float(np.median(tv_radius))
 
-    dual_shape = (*v.shape, 2)
-    if initial_dual is None:
-        dual_tv = np.zeros(dual_shape, dtype=float)
-    else:
-        dual_tv = np.asarray(initial_dual, dtype=float).copy()
-        if dual_tv.shape != dual_shape:
-            raise ValueError("initial_dual has incompatible shape")
+    u_t = dt_forward(u, ht)
+    grad_u = np.stack((dx_central(u[:-1], hx), dy_central(u[:-1], hy)), axis=-1)
+    grad_norm_squared = grad_u[..., 0] * grad_u[..., 0] + grad_u[..., 1] * grad_u[..., 1]
 
-    v_start = v.copy()
-    v_bar = v.copy()
-
-    u_t = dt_forward(
-        u,
-        config.ht,
+    result = _pdhg_block(
+        v, _initial_duals(None if initial_dual is None else (initial_dual,), ((*v.shape, 2),)),
+        forward=lambda x: (vector_field_gradient(x, hx, hy),),
+        adjoint=lambda p: vector_field_gradient_adjoint(p[0], hx, hy),
+        prox_primal=lambda z, t: prox_optical_flow_affine(
+            z, u_t, grad_u, t, gradient_norm_squared=grad_norm_squared),
+        prox_duals=lambda p: (project_frobenius_tv_ball(p[0], tv_radius),),
+        tau=step * balance,
+        sigmas=(step / balance,),
+        primal_scale=np.array([hx, hy]),
+        dual_scales=(tv_radius[..., None, None],),
+        objective=lambda x: weighted_v_block_objective(x, u, raw_beta, kappa, ht, hx, hy),
+        max_iterations=config.max_inner_v_iterations,
+        config=config,
     )
+    return replace(result, dual=result.dual[0])
 
-    grad_u = np.stack(
-        (
-            dx_central(
-                u[:-1],
-                config.hx,
-            ),
-            dy_central(
-                u[:-1],
-                config.hy,
-            ),
-        ),
-        axis=-1,
+
+def _block_record(prefix: str, result: WeightedBlockResult) -> dict[str, float]:
+    values = dict(
+        inner_iterations=result.iterations,
+        residual_evaluations=result.residual_evaluations,
+        inner_residual=result.residual,
+        primal_residual=result.primal_residual,
+        dual_residual=result.dual_residual,
+        primal_residual_ratio=result.primal_residual / result.residual_limit,
+        dual_residual_ratio=result.dual_residual / result.residual_limit,
+        raw_primal_residual=result.raw_primal_residual,
+        raw_dual_residual=result.raw_dual_residual,
+        primal_step=result.primal_step_size,
+        iterate_change=result.iterate_change,
+        block_objective_change=result.objective_after - result.objective_before,
+        accepted_step_scale=result.accepted_step_scale,
+        objective_safeguarded=result.safeguarded,
+        safeguard_adjustment=result.safeguard_adjustment,
+        **dict(zip(("dual_tv_step", "dual_transport_step"), result.dual_step_sizes)),
     )
-    grad_norm_squared = (
-        grad_u[..., 0] * grad_u[..., 0] + grad_u[..., 1] * grad_u[..., 1]
-    )
-    residual_evaluations = 0
-
-    primal_residual = np.inf
-    dual_residual = np.inf
-    primal_limit = 0.0
-    dual_limit = 0.0
-    iterate_change = np.inf
-    inner_converged = False
-    accepted_candidate = None
-
-    def fixed_point_residuals(value):
-        probe = prox_optical_flow_affine(value - tau*adjoint(dual_tv), u_t, grad_u,
-                                         tau, gradient_norm_squared=grad_norm_squared)
-        probe_tv = project_frobenius_tv_ball(dual_tv + sigma*forward(value), tv_radius)
-        return (_rms((value-probe)/np.array([config.hx,config.hy])),
-                _rms((dual_tv-probe_tv)/tv_radius[..., None, None]),
-                _rms((value-probe)/tau), _rms((dual_tv-probe_tv)/sigma))
-
-    objective = lambda candidate: weighted_v_block_objective(
-        candidate,
-        u,
-        raw_beta,  # Objective evaluation applies the stencil envelope itself.
-        config.kappa,
-        config.ht,
-        config.hx,
-        config.hy,
-    )
-    for iteration in range(
-        1,
-        config.max_inner_v_iterations + 1,
-    ):
-        old_v = v
-        old_dual_tv = dual_tv
-
-        dual_tv = project_frobenius_tv_ball(
-            dual_tv
-            + sigma
-            * vector_field_gradient(
-                v_bar,
-                config.hx,
-                config.hy,
-            ),
-            tv_radius,
-        )
-
-        proximal_argument = (
-            v
-            - tau
-            * vector_field_gradient_adjoint(
-                dual_tv,
-                config.hx,
-                config.hy,
-            )
-        )
-
-        v = prox_optical_flow_affine(
-            proximal_argument,
-            u_t,
-            grad_u,
-            tau,
-            gradient_norm_squared=grad_norm_squared,
-        )
-
-        v_bar = (
-            v
-            + config.theta * (v - old_v)
-        )
-
-        if not _inner_residual_due(iteration, config.max_inner_v_iterations, config):
-            continue
-        residual_evaluations += 1
-
-        delta_v = old_v - v
-        delta_dual = old_dual_tv - dual_tv
-        adjoint_delta_dual = adjoint(delta_dual)
-        forward_delta_v = forward(delta_v)
-
-        primal_residual_array = (
-            delta_v / tau - adjoint_delta_dual
-        )
-        dual_residual_array = (
-            delta_dual / sigma - forward_delta_v
-        )
-        primal_residual = _rms(primal_residual_array)
-        dual_residual = _rms(dual_residual_array)
-        raw_primal_residual, raw_dual_residual = primal_residual, dual_residual
-        if config.residual_mode == "scaled":
-            primal_residual = _rms(tau*primal_residual_array/np.array([config.hx,config.hy]))
-            dual_residual = _rms(sigma*dual_residual_array/tv_radius[...,None,None])
-            primal_limit = dual_limit = _scaled_limit(config)
-        else:
-            primal_limit = _residual_limit(
-                config.inner_absolute_tolerance, config.inner_tolerance,
-                _rms(delta_v / tau), _rms(adjoint_delta_dual),
-            )
-            dual_limit = _residual_limit(
-                config.inner_absolute_tolerance, config.inner_tolerance,
-                _rms(delta_dual / sigma), _rms(forward_delta_v),
-            )
-        iterate_change = _relative_rms_change(v, old_v)
-
-        if (
-            iteration
-            >= config.min_inner_iterations
-            and primal_residual <= primal_limit
-            and dual_residual <= dual_limit
-        ):
-            if config.residual_mode == "scaled":
-                # Keep extra accuracy work inside this convex block rather
-                # than exhausting outer iterations on an uncertified state.
-                guarded = _objective_safeguard(v_start, v, objective, config)
-                checked_primal, checked_dual, _, _ = fixed_point_residuals(guarded[0])
-                if (checked_primal > primal_limit or checked_dual > dual_limit
-                        or _rms(guarded[0]-v) > _scaled_limit(config)*min(config.hx,config.hy)):
-                    continue
-                accepted_candidate = guarded
-            inner_converged = True
-            break
-
-    raw_candidate = v.copy()
-    (
-        v,
-        objective_before,
-        objective_after,
-        accepted_scale,
-        safeguarded,
-    ) = (accepted_candidate if accepted_candidate is not None
-         else _objective_safeguard(v_start, v, objective, config))
-    safeguard_adjustment = _rms(v - raw_candidate)
-    safeguard_limit = _residual_limit(
-        config.inner_absolute_tolerance,
-        config.inner_tolerance,
-        _rms(v),
-        _rms(raw_candidate),
-    )
-    if config.residual_mode == "scaled":
-        safeguard_limit = _scaled_limit(config)*min(config.hx,config.hy)
-        (primal_residual, dual_residual, raw_primal_residual,
-         raw_dual_residual) = fixed_point_residuals(v)
-    returned_converged = (
-        inner_converged and safeguard_adjustment <= safeguard_limit
-        and primal_residual <= primal_limit and dual_residual <= dual_limit
-    )
-
-    return WeightedBlockResult(
-        value=v,
-        iterations=iteration,
-        residual=max(primal_residual, dual_residual),
-        converged=returned_converged,
-        primal_residual=primal_residual,
-        dual_residual=dual_residual,
-        primal_residual_limit=primal_limit,
-        dual_residual_limit=dual_limit,
-        iterate_change=iterate_change,
-        objective_before=objective_before,
-        objective_after=objective_after,
-        accepted_step_scale=accepted_scale,
-        step_size=step,
-        raw_primal_residual=raw_primal_residual,
-        raw_dual_residual=raw_dual_residual,
-        primal_step_size=tau, dual_tv_step_size=sigma,
-        step_stability_bound=tau*sigma*norm_squared,
-        norm_squared=norm_squared,
-        safeguarded=safeguarded,
-        safeguard_adjustment=safeguard_adjustment,
-        # Feasibility is preserved by the projection, so keep the dual state
-        # when the primal safeguard is active instead of restarting PDHG.
-        dual=dual_tv,
-        residual_evaluations=residual_evaluations,
-        returned_state_checked=config.residual_mode == "scaled",
-    )
+    return {f"{prefix}_{key}": float(value) for key, value in values.items()}
 
 
 CHECKPOINT_PROTOCOL = 1
@@ -915,18 +411,8 @@ def _checkpoint_problem_id(f, alpha, beta, u0, v0, config):
     return digest.hexdigest()
 
 
-def solve_weighted_tvtv(
-    f: Array,
-    alpha_weight: Array,
-    beta_weight: Array,
-    config: WeightedTVTVConfig,
-    initial_u: Array | None = None,
-    initial_v: Array | None = None,
-    *,
-    resume_state: dict | None = None,
-    checkpoint_callback=None,
-    should_stop=None,
-) -> WeightedTVTVResult:
+def solve_weighted_tvtv(f, alpha_weight, beta_weight, config, initial_u=None, initial_v=None, *,
+                        resume_state=None, checkpoint_callback=None, should_stop=None) -> WeightedTVTVResult:
     """Run alternating minimization for fixed weight maps.
 
     Optional checkpoints are taken at completed outer iterations. They retain
@@ -934,132 +420,39 @@ def solve_weighted_tvtv(
     an outer boundary; an unfinished inner solve is not checkpointed.
     """
     f = np.asarray(f, dtype=float)
-
     if f.ndim != 3 or f.shape[0] < 2:
-        raise ValueError(
-            "f must have shape (nt, ny, nx) with nt>=2"
-        )
+        raise ValueError("f must have shape (nt, ny, nx) with nt>=2")
+    v_shape = (f.shape[0] - 1, *f.shape[1:], 2)
+    alpha = validate_weight_map(alpha_weight, f.shape, "alpha_weight")
+    beta = validate_weight_map(beta_weight, v_shape[:-1], "beta_weight")
+    u = f.copy() if initial_u is None else np.asarray(initial_u, dtype=float).copy()
+    v = np.zeros(v_shape) if initial_v is None else np.asarray(initial_v, dtype=float).copy()
+    if u.shape != f.shape or v.shape != v_shape:
+        raise ValueError("initial values have incompatible shapes")
 
-    alpha = validate_weight_map(
-        alpha_weight,
-        f.shape,
-        "alpha_weight",
-    )
-
-    v_shape = (
-        f.shape[0] - 1,
-        *f.shape[1:],
-        2,
-    )
-
-    beta = validate_weight_map(
-        beta_weight,
-        v_shape[:-1],
-        "beta_weight",
-    )
-
-    if initial_u is None:
-        u = f.copy()
-    else:
-        u = np.asarray(
-            initial_u,
-            dtype=float,
-        ).copy()
-
-    if initial_v is None:
-        v = np.zeros(
-            v_shape,
-            dtype=float,
-        )
-    else:
-        v = np.asarray(
-            initial_v,
-            dtype=float,
-        ).copy()
-
-    if (
-        u.shape != f.shape
-        or v.shape != v_shape
-    ):
-        raise ValueError(
-            "initial values have incompatible shapes"
-        )
-
-    initial_energy = manuscript_energy(
-        u,
-        v,
-        f,
-        alpha,
-        beta,
-        config.kappa,
-        config.ht,
-        config.hx,
-        config.hy,
-    )
-
-    history: list[dict[str, float]] = [
-        {
-            "iteration": 0.0,
-            **initial_energy,
-            "transport_residual": transport_residual(
-                u, v, config.ht, config.hx, config.hy
-            ),
-            "relative_u_change": 0.0,
-            "relative_v_change": 0.0,
-            "absolute_u_change": 0.0,
-            "absolute_v_change": 0.0,
-            "u_change_limit": 0.0,
-            "v_change_limit": 0.0,
-            "energy_relative_change": 0.0,
-            "energy_change_limit": 0.0,
-            "outer_consecutive_successes": 0.0,
-            "u_inner_iterations": 0.0,
-            "v_inner_iterations": 0.0,
-            "u_residual_evaluations": 0.0,
-            "v_residual_evaluations": 0.0,
-            "u_inner_residual": 0.0,
-            "v_inner_residual": 0.0,
-            "u_primal_residual": 0.0,
-            "u_dual_residual": 0.0,
-            "v_primal_residual": 0.0,
-            "v_dual_residual": 0.0,
-            "u_primal_residual_ratio": 0.0,
-            "u_dual_residual_ratio": 0.0,
-            "v_primal_residual_ratio": 0.0,
-            "v_dual_residual_ratio": 0.0,
-            "u_raw_primal_residual": 0.0,
-            "u_raw_dual_residual": 0.0,
-            "v_raw_primal_residual": 0.0,
-            "v_raw_dual_residual": 0.0,
-            "u_primal_step": 0.0,
-            "u_dual_tv_step": 0.0,
-            "u_dual_transport_step": 0.0,
-            "v_primal_step": 0.0,
-            "v_dual_tv_step": 0.0,
-            "u_iterate_change": 0.0,
-            "v_iterate_change": 0.0,
-            "u_block_objective_change": 0.0,
-            "v_block_objective_change": 0.0,
-            "u_accepted_step_scale": 1.0,
-            "v_accepted_step_scale": 1.0,
-            "u_objective_safeguarded": 0.0,
-            "v_objective_safeguarded": 0.0,
-            "u_safeguard_adjustment": 0.0,
-            "v_safeguard_adjustment": 0.0,
-            "u_returned_state_checked": 0.0,
-            "v_returned_state_checked": 0.0,
-        }
-    ]
-
+    spacings = (config.ht, config.hx, config.hy)
+    initial_energy = manuscript_energy(u, v, f, alpha, beta, config.kappa, *spacings)
+    history = [{"iteration": 0.0, **initial_energy, "transport_residual": transport_residual(u, v, *spacings)}]
     previous_total = float(initial_energy["total"])
     consecutive_successes = 0
-    u_dual: tuple[Array, Array] | None = None
-    v_dual: Array | None = None
-
+    u_dual = v_dual = None
     completed_outer = 0
+
     problem_id = None
     if resume_state is not None or checkpoint_callback is not None:
         problem_id = _checkpoint_problem_id(f, alpha, beta, u, v, config)
+
+    def result(converged, stop_reason):
+        return WeightedTVTVResult(u=u, v=v, history=history, outer_iterations=completed_outer,
+                                  converged=converged, stop_reason=stop_reason, update_order=config.update_order)
+
+    def checkpoint():
+        if checkpoint_callback is not None:
+            checkpoint_callback(dict(schema=CHECKPOINT_PROTOCOL, problem_id=problem_id, u=u, v=v,
+                                     u_dual=u_dual, v_dual=v_dual, history=history,
+                                     outer_iterations=completed_outer, previous_total=previous_total,
+                                     consecutive_successes=consecutive_successes))
+
     if resume_state is not None:
         if resume_state.get("schema") != CHECKPOINT_PROTOCOL or resume_state.get("problem_id") != problem_id:
             raise ValueError("Checkpoint does not match the observations, weights, initial state or solver settings.")
@@ -1068,8 +461,7 @@ def solve_weighted_tvtv(
         v = np.asarray(resume_state["v"], dtype=float).copy()
         if u.shape != f.shape or v.shape != v_shape:
             raise ValueError("Checkpoint primal shapes are incompatible.")
-        saved_u_dual = resume_state["u_dual"]
-        saved_v_dual = resume_state["v_dual"]
+        saved_u_dual, saved_v_dual = resume_state["u_dual"], resume_state["v_dual"]
         u_dual = None if saved_u_dual is None else tuple(np.asarray(x, dtype=float).copy() for x in saved_u_dual)
         v_dual = None if saved_v_dual is None else np.asarray(saved_v_dual, dtype=float).copy()
         history = [dict(record) for record in resume_state["history"]]
@@ -1082,222 +474,75 @@ def solve_weighted_tvtv(
         if completed_outer and (u_dual is None or v_dual is None):
             raise ValueError("A completed outer checkpoint must include both dual states.")
         if consecutive_successes >= config.required_outer_successes:
-            return WeightedTVTVResult(u=u, v=v, history=history,
-                outer_iterations=completed_outer, converged=True,
-                stop_reason="converged", update_order=config.update_order)
-
-    def checkpoint():
-        if checkpoint_callback is not None:
-            checkpoint_callback(dict(schema=CHECKPOINT_PROTOCOL,
-                problem_id=problem_id, u=u, v=v, u_dual=u_dual, v_dual=v_dual,
-                history=history, outer_iterations=completed_outer,
-                previous_total=previous_total,
-                consecutive_successes=consecutive_successes))
-
-    if resume_state is None:
+            return result(True, "converged")
+    else:
         checkpoint()
-    for outer_iteration in range(
-        completed_outer + 1,
-        config.max_outer_iterations + 1,
-    ):
-        if should_stop is not None and should_stop():
-            return WeightedTVTVResult(u=u, v=v, history=history,
-                outer_iterations=completed_outer, converged=False,
-                stop_reason="checkpoint_stop", update_order=config.update_order)
-        old_u = u.copy()
-        old_v = v.copy()
 
-        if config.update_order == "v_then_u":
-            v_result = solve_weighted_v_block(
-                u, beta, v, config, initial_dual=v_dual
-            )
-            v = v_result.value
-            v_dual = (
-                v_result.dual
-                if isinstance(v_result.dual, np.ndarray)
-                else None
-            )
-            u_result = solve_weighted_u_block(
-                f, v, alpha, u, config, initial_dual=u_dual
-            )
-            u = u_result.value
-            u_dual = (
-                u_result.dual
-                if isinstance(u_result.dual, tuple)
-                else None
-            )
+    image_scale = max(_rms(f), 0.1)
+    pixel = min(config.hx, config.hy)
+    pixels = np.array([config.hx, config.hy])
+    for outer_iteration in range(completed_outer + 1, config.max_outer_iterations + 1):
+        if should_stop is not None and should_stop():
+            return result(False, "checkpoint_stop")
+        # Block solves return new arrays, so these references keep the old iterate.
+        old_u, old_v = u, v
+        if config.update_order == "u_then_v":
+            u_result = solve_weighted_u_block(f, v, alpha, u, config, u_dual)
+            v_result = solve_weighted_v_block(u_result.value, beta, v, config, v_dual)
         else:
-            u_result = solve_weighted_u_block(
-                f, v, alpha, u, config, initial_dual=u_dual
-            )
-            u = u_result.value
-            u_dual = (
-                u_result.dual
-                if isinstance(u_result.dual, tuple)
-                else None
-            )
-            v_result = solve_weighted_v_block(
-                u, beta, v, config, initial_dual=v_dual
-            )
-            v = v_result.value
-            v_dual = (
-                v_result.dual
-                if isinstance(v_result.dual, np.ndarray)
-                else None
-            )
+            v_result = solve_weighted_v_block(u, beta, v, config, v_dual)
+            u_result = solve_weighted_u_block(f, v_result.value, alpha, u, config, u_dual)
+        u, v = u_result.value, v_result.value
+        u_dual, v_dual = u_result.dual, v_result.dual
 
         absolute_u_change = _rms(u - old_u)
         absolute_v_change = _rms(v - old_v)
-        u_change_limit = _residual_limit(
-            config.outer_absolute_tolerance,
-            config.outer_tolerance,
-            _rms(u),
-            _rms(old_u),
-        )
-        v_change_limit = _residual_limit(
-            config.outer_absolute_tolerance,
-            config.outer_tolerance,
-            _rms(v),
-            _rms(old_v),
-        )
-        if config.residual_mode == "scaled":
-            u_change_limit = (config.outer_absolute_tolerance + config.outer_tolerance)*max(_rms(f),0.1)
-            pixels = np.array([config.hx,config.hy])
-            v_change_limit = min(config.hx,config.hy)*(config.outer_absolute_tolerance
-                + config.outer_tolerance*max(1.,_rms(v/pixels),_rms(old_v/pixels)))
-            if config.outer_velocity_tolerance_pixels is not None:
-                v_change_limit = config.outer_velocity_tolerance_pixels*min(config.hx,config.hy)
-        u_change = _relative_rms_change(u, old_u)
-        v_change = _relative_rms_change(v, old_v)
+        u_change_limit = (config.outer_absolute_tolerance + config.outer_tolerance) * image_scale
+        if config.outer_velocity_tolerance_pixels is None:
+            v_change_limit = pixel * (config.outer_absolute_tolerance + config.outer_tolerance
+                                      * max(1.0, _rms(v / pixels), _rms(old_v / pixels)))
+        else:
+            v_change_limit = config.outer_velocity_tolerance_pixels * pixel
 
-        energy = manuscript_energy(
-            u,
-            v,
-            f,
-            alpha,
-            beta,
-            config.kappa,
-            config.ht,
-            config.hx,
-            config.hy,
-        )
+        energy = manuscript_energy(u, v, f, alpha, beta, config.kappa, *spacings)
         total = float(energy["total"])
         absolute_energy_change = abs(total - previous_total)
         energy_scale = max(abs(total), abs(previous_total), np.finfo(float).eps)
-        energy_relative_change = absolute_energy_change / energy_scale
-        energy_change_limit = (
-            config.outer_energy_absolute_tolerance
-            + config.outer_energy_tolerance * energy_scale
-        )
+        energy_change_limit = config.outer_energy_absolute_tolerance + config.outer_energy_tolerance * energy_scale
 
-        outer_success = (
-            absolute_u_change <= u_change_limit
-            and absolute_v_change <= v_change_limit
-            and absolute_energy_change <= energy_change_limit
-            and u_result.converged
-            and v_result.converged
-        )
-        consecutive_successes = (
-            consecutive_successes + 1 if outer_success else 0
-        )
+        outer_success = (absolute_u_change <= u_change_limit and absolute_v_change <= v_change_limit
+                         and absolute_energy_change <= energy_change_limit
+                         and u_result.converged and v_result.converged)
+        consecutive_successes = consecutive_successes + 1 if outer_success else 0
 
         record = {
             "iteration": float(outer_iteration),
             **energy,
-            "transport_residual": transport_residual(
-                u, v, config.ht, config.hx, config.hy
-            ),
-            "relative_u_change": u_change,
-            "relative_v_change": v_change,
+            "transport_residual": transport_residual(u, v, *spacings),
+            "relative_u_change": _relative_rms_change(u, old_u),
+            "relative_v_change": _relative_rms_change(v, old_v),
             "absolute_u_change": absolute_u_change,
             "absolute_v_change": absolute_v_change,
             "u_change_limit": u_change_limit,
             "v_change_limit": v_change_limit,
-            "energy_relative_change": energy_relative_change,
+            "energy_relative_change": absolute_energy_change / energy_scale,
             "energy_change_limit": energy_change_limit,
             "outer_consecutive_successes": float(consecutive_successes),
-            "u_inner_iterations": float(u_result.iterations),
-            "v_inner_iterations": float(v_result.iterations),
-            "u_residual_evaluations": float(u_result.residual_evaluations),
-            "v_residual_evaluations": float(v_result.residual_evaluations),
-            "u_inner_residual": u_result.residual,
-            "v_inner_residual": v_result.residual,
-            "u_primal_residual": u_result.primal_residual,
-            "u_dual_residual": u_result.dual_residual,
-            "v_primal_residual": v_result.primal_residual,
-            "v_dual_residual": v_result.dual_residual,
-            "u_primal_residual_ratio": (
-                u_result.primal_residual / u_result.primal_residual_limit
-            ),
-            "u_dual_residual_ratio": (
-                u_result.dual_residual / u_result.dual_residual_limit
-            ),
-            "v_primal_residual_ratio": (
-                v_result.primal_residual / v_result.primal_residual_limit
-            ),
-            "v_dual_residual_ratio": (
-                v_result.dual_residual / v_result.dual_residual_limit
-            ),
-            "u_raw_primal_residual": u_result.raw_primal_residual,
-            "u_raw_dual_residual": u_result.raw_dual_residual,
-            "v_raw_primal_residual": v_result.raw_primal_residual,
-            "v_raw_dual_residual": v_result.raw_dual_residual,
-            "u_primal_step": u_result.primal_step_size,
-            "u_dual_tv_step": u_result.dual_tv_step_size,
-            "u_dual_transport_step": u_result.dual_transport_step_size,
-            "v_primal_step": v_result.primal_step_size,
-            "v_dual_tv_step": v_result.dual_tv_step_size,
-            "u_iterate_change": u_result.iterate_change,
-            "v_iterate_change": v_result.iterate_change,
-            "u_block_objective_change": (
-                u_result.objective_after - u_result.objective_before
-            ),
-            "v_block_objective_change": (
-                v_result.objective_after - v_result.objective_before
-            ),
-            "u_accepted_step_scale": u_result.accepted_step_scale,
-            "v_accepted_step_scale": v_result.accepted_step_scale,
-            "u_objective_safeguarded": float(u_result.safeguarded),
-            "v_objective_safeguarded": float(v_result.safeguarded),
-            "u_safeguard_adjustment": u_result.safeguard_adjustment,
-            "v_safeguard_adjustment": v_result.safeguard_adjustment,
-            "u_returned_state_checked": float(u_result.returned_state_checked),
-            "v_returned_state_checked": float(v_result.returned_state_checked),
+            **_block_record("u", u_result),
+            **_block_record("v", v_result),
         }
         history.append(record)
 
         if config.verbose:
-            print(
-                f"outer={outer_iteration:3d} "
-                f"energy={total:.6e} "
-                f"transport={record['transport_residual']:.3e} "
-                f"du={absolute_u_change:.3e}/{u_change_limit:.3e} "
-                f"dv={absolute_v_change:.3e}/{v_change_limit:.3e} "
-                f"primal-dual="
-                f"{max(record['u_primal_residual_ratio'], record['u_dual_residual_ratio'], record['v_primal_residual_ratio'], record['v_dual_residual_ratio']):.2e}"
-            )
+            ratio = max(record[f"{block}_{kind}_residual_ratio"] for block in "uv" for kind in ("primal", "dual"))
+            print(f"outer={outer_iteration:3d} energy={total:.6e} transport={record['transport_residual']:.3e} "
+                  f"du={absolute_u_change:.3e}/{u_change_limit:.3e} "
+                  f"dv={absolute_v_change:.3e}/{v_change_limit:.3e} primal-dual={ratio:.2e}")
 
         previous_total = total
         completed_outer = outer_iteration
         checkpoint()
-
         if consecutive_successes >= config.required_outer_successes:
-            return WeightedTVTVResult(
-                u=u,
-                v=v,
-                history=history,
-                outer_iterations=outer_iteration,
-                converged=True,
-                stop_reason="converged",
-                update_order=config.update_order,
-            )
+            return result(True, "converged")
 
-    return WeightedTVTVResult(
-        u=u,
-        v=v,
-        history=history,
-        outer_iterations=completed_outer,
-        converged=False,
-        stop_reason="maximum_outer_iterations",
-        update_order=config.update_order,
-    )
+    return result(False, "maximum_outer_iterations")

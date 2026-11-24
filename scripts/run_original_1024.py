@@ -1,5 +1,6 @@
 """Separate, resumable controller for the original 1024 master experiment."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -8,6 +9,10 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
+
+JOB_FIELDS = ("stage", "seed", "cell", "alpha", "mode", "leaves")
+RUNNING = set()  # Worker processes, so an interrupt can stop all of them.
 
 
 def replace_with_retry(path, target, original_replace):
@@ -53,14 +58,17 @@ def stop(process):
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # It exited between poll() and the kill.
         process.wait()
 
 
 def invoke(args, action, limit=120, **details):
     out = args.root/"results/synthetic_original_1024/launcher"
     out.mkdir(parents=True, exist_ok=True)
-    token = str(time.time_ns())
+    token = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
     request, response, log = (out/f"{token}.{name}" for name in ("request.json", "response.json", "log.txt"))
     request.write_text(json.dumps(dict(root=str(args.root), config=str(args.config) if args.config else None,
                                       action=action, response=str(response), **details)))
@@ -73,6 +81,7 @@ def invoke(args, action, limit=120, **details):
     with log.open("w") as stream:
         p = subprocess.Popen([sys.executable, "-u", str(Path(__file__).resolve()), "--worker", str(request)],
                              cwd=args.root, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
+        RUNNING.add(p)
         try:
             while p.poll() is None:
                 left = limit-(time.monotonic()-started)
@@ -86,9 +95,28 @@ def invoke(args, action, limit=120, **details):
         except KeyboardInterrupt:
             stop(p)
             raise
+        finally:
+            RUNNING.discard(p)
     if p.returncode or not response.exists():
         raise RuntimeError(log.read_text(errors="replace")[-4000:])
     return json.loads(response.read_text())
+
+
+def solve_all(args, jobs, limit):
+    """Run independent solves at once; each worker keeps one numerical thread.
+
+    Cache entries are locked per solve, so distinct keys never share files.
+    """
+    # ponytail: a batch waits for its slowest solve; refill freed slots if stragglers dominate.
+    with ThreadPoolExecutor(len(jobs)) as pool:
+        futures = [pool.submit(invoke, args, "solve", limit=limit, job=job, seconds=max(1, limit-15))
+                   for job in jobs]
+        try:
+            return [future.result() for future in futures]
+        except KeyboardInterrupt:
+            for process in list(RUNNING):
+                stop(process)
+            raise
 
 
 def show(result):
@@ -123,12 +151,16 @@ def main():
     parser.add_argument("--config", type=Path)
     parser.add_argument("--seconds", type=float, default=300, help="Hard limit per solve, including startup.")
     parser.add_argument("--budget-minutes", type=float, default=30, help="Total budget for this command, including planning.")
+    parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1),
+                        help="Independent solves run at once, one numerical thread each (default: min(4, CPUs)).")
     args = parser.parse_args()
     args.root = args.root.resolve()
     if args.config:
         args.config = args.config.resolve()
     if not math.isfinite(args.seconds) or args.seconds < 30 or not math.isfinite(args.budget_minutes) or args.budget_minutes < 1:
         parser.error("Use seconds >=30 and a finite budget >=1 minute.")
+    if args.workers < 1:
+        parser.error("Use at least one worker.")
     try:
         if args.action in ("prepare", "report", "export"):
             show(invoke(args, args.action))
@@ -148,17 +180,20 @@ def main():
             if plan["complete"]:
                 show(invoke(args, "report"))
                 return 0
-            # Replan after every solve: expansions and descendants are adaptive.
-            row = plan["jobs"][0]
-            job = {key: row[key] for key in ("stage", "seed", "cell", "alpha", "mode", "leaves")}
+            # Replan after every batch: expansions and descendants are adaptive.
+            # Every pending job is needed now; jobs with the same cache key are one solve.
+            unique = {row["key"]: {key: row[key] for key in JOB_FIELDS} for row in plan["jobs"]}
+            jobs = list(unique.values())[:args.workers]
             limit = min(args.seconds, deadline-time.monotonic())
             if limit < 30:
                 continue
-            print("Solving:", job, flush=True)
-            result = invoke(args, "solve", limit=limit, job=job, seconds=max(1, limit-15))
-            if not result["eligible"]:
-                print("Unresolved candidate:", result["status"], "; selection stops here.")
-                if result["status"] == "maximum_outer_iterations":
+            for job in jobs:
+                print("Solving:", job, flush=True)
+            unresolved = [r for r in solve_all(args, jobs, limit) if not r["eligible"]]
+            if unresolved:
+                for result in unresolved:
+                    print("Unresolved candidate:", result["status"], "; selection stops here.")
+                if any(r["status"] == "maximum_outer_iterations" for r in unresolved):
                     print("The iteration cap requires numerical review; repeating alone cannot lift it.")
                 else:
                     print("Repeat the same command to resume a time-limited checkpoint.")

@@ -59,6 +59,9 @@ and compares the accepted map with the selected constant in full-domain solves
 at tighter tolerances. The default stage budgets are 45, 45 and 30 minutes.
 Budgets bound computation time; they are not runtime predictions. Repeating
 the command reuses completed solves and resumes compatible checkpoints.
+Independent candidates (alphas, child cells, seeds) are solved in parallel,
+one numerical thread per process; `--workers N` sets how many (default: the
+smaller of 4 and the CPU count).
 
 For a 512 experiment with larger computation budgets:
 

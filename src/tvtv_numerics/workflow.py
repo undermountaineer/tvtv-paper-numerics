@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import zipfile
 
@@ -26,7 +27,8 @@ CELL_NAMES = ("top_left", "top_right", "bottom_left", "bottom_right")
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
+    # A per-process name lets parallel workers write the same file safely.
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(value, indent=2, allow_nan=False)+"\n", encoding="utf-8")
     temporary.replace(path)
 
@@ -278,9 +280,9 @@ class Experiment:
 def smoke(root):
     """Small constant-sequence fixed-point and checkpoint/resume check."""
     f = np.full((3, 7, 8), .4)
-    cfg = WeightedTVTVConfig(step_policy="balanced", residual_mode="scaled", update_order="u_then_v",
+    cfg = WeightedTVTVConfig(update_order="u_then_v",
                             max_outer_iterations=4, max_inner_u_iterations=40, max_inner_v_iterations=40,
-                            min_inner_iterations=2, norm_iterations=6)
+                            min_inner_iterations=2)
     a, b = np.full(f.shape, .001), np.full((2, 7, 8), .0125)
     cache = ResumableSolverCache(Path(root)/"results/proof_of_concept/smoke-cache")
     cache.run(f, a, b, cfg, outer_iteration_budget=1)

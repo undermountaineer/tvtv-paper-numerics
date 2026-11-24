@@ -22,7 +22,6 @@ class TestBlockObjectiveConsistency(unittest.TestCase):
             max_inner_u_iterations=4,
             max_inner_v_iterations=4,
             min_inner_iterations=1,
-            norm_iterations=6,
             hx=0.2,
             hy=0.25,
             ht=0.5,

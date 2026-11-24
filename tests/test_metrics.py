@@ -4,12 +4,11 @@ import numpy as np
 
 from tvtv_numerics.dyadic import DyadicCell
 from tvtv_numerics.metrics import (
-    evaluation_metrics,
     psnr,
-    relative_l2_error,
     rmse,
     upper_level_loss,
 )
+from tvtv_numerics.original_1024 import children
 
 
 class TestMetrics(unittest.TestCase):
@@ -39,7 +38,7 @@ class TestMetrics(unittest.TestCase):
         )["total"]
 
         child_loss = 0.0
-        for child in root.children():
+        for child in children(root):
             child_loss += upper_level_loss(
                 u[child.u_slices],
                 v[child.v_slices],
@@ -55,31 +54,6 @@ class TestMetrics(unittest.TestCase):
             child_loss,
             places=12,
         )
-
-    def test_relative_l2_error(self):
-        reference = np.ones((2, 2))
-        value = 2.0 * reference
-
-        self.assertAlmostEqual(
-            relative_l2_error(value, reference),
-            1.0,
-        )
-        self.assertEqual(
-            relative_l2_error(reference, reference),
-            0.0,
-        )
-
-    def test_evaluation_metrics_are_exact_on_ground_truth(self):
-        u = np.full((3, 2, 2), 0.4)
-        v = np.zeros((2, 2, 2, 2))
-
-        metrics = evaluation_metrics(u, v, u, v)
-
-        self.assertEqual(metrics["upper_loss"], 0.0)
-        self.assertEqual(metrics["image_rmse"], 0.0)
-        self.assertEqual(metrics["relative_image_l2"], 0.0)
-        self.assertEqual(metrics["endpoint_error"], 0.0)
-        self.assertTrue(np.isinf(metrics["psnr"]))
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ def main():
     p.add_argument("--compare-minutes", type=int, default=30)
     p.add_argument("--budget-minutes", type=int, default=120, help="Budget for a single selected compute stage.")
     p.add_argument("--seconds", type=int, default=3600, help="Per-solve limit for a single selected compute stage.")
+    p.add_argument("--workers", type=int, help="Independent solves run at once (default: min(4, CPUs)).")
     args = p.parse_args()
     if min(args.baseline_minutes, args.refine_minutes, args.compare_minutes, args.budget_minutes) < 1 or args.seconds < 30:
         p.error("Use positive minute budgets and seconds >=30.")
@@ -40,6 +41,8 @@ def main():
             if minutes is not None and stage not in ("prepare", "export"):
                 seconds = minutes*60 if args.action == "run" else args.seconds
                 command += ["--seconds", str(seconds), "--budget-minutes", str(minutes)]
+            if args.workers is not None:
+                command += ["--workers", str(args.workers)]
             code = subprocess.call(command, cwd=root)
             if code:
                 print("Stopped at", stage, "-- inspect the report. Repeat this command to resume time-limited work.", flush=True)

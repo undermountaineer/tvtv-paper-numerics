@@ -5,8 +5,10 @@ Existing minimal_experiment.CachedSolver remains unchanged.
 """
 from __future__ import annotations
 
+import ast
 from contextlib import contextmanager
 from dataclasses import asdict
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -18,7 +20,7 @@ from .weighted_solver import WeightedTVTVConfig, WeightedTVTVResult, solve_weigh
 
 CACHE_PROTOCOL = 1
 SOURCE_FILES = ('weighted_solver.py', 'weighted_energy.py', 'weights.py',
-                'operators.py', 'proximal.py', 'energy.py', 'checkpoint_cache.py')
+                'operators.py', 'proximal.py', 'checkpoint_cache.py')
 
 
 def settings_identity(config):
@@ -34,10 +36,20 @@ def _array_hash(value):
                 sha256=hashlib.sha256(array.tobytes()).hexdigest())
 
 
-def scientific_code_id():
+def source_id(names):
+    """Hash of the parsed code: comments, layout and line endings do not count.
+
+    Docstrings and every statement still do.
+    """
+    # ponytail: ast.dump output is specific to the Python minor version; the project pins 3.12.
     directory = Path(__file__).parent
-    return hashlib.sha256(b''.join((directory / name).read_bytes()
-                                  for name in SOURCE_FILES)).hexdigest()
+    return hashlib.sha256(b''.join(ast.dump(ast.parse((directory / name).read_text(encoding='utf-8'))).encode()
+                                   for name in names)).hexdigest()
+
+
+@lru_cache(maxsize=None)  # Source files do not change during a process.
+def scientific_code_id():
+    return source_id(SOURCE_FILES)
 
 
 def solve_identity(noisy, alpha, beta, config, initial_u=None, initial_v=None):

@@ -34,9 +34,9 @@ class TestWorkflow(unittest.TestCase):
         rng = np.random.default_rng(12)
         f = .4 + .05*rng.normal(size=(3, 4, 6))
         a, b = np.full(f.shape, .02), np.full((2, 4, 6), .03)
-        cfg = WeightedTVTVConfig(step_policy="balanced", residual_mode="scaled", update_order="u_then_v",
+        cfg = WeightedTVTVConfig(update_order="u_then_v",
                                 max_outer_iterations=5, max_inner_u_iterations=30, max_inner_v_iterations=30,
-                                min_inner_iterations=2, norm_iterations=6, inner_tolerance=1e-9, outer_tolerance=1e-9)
+                                min_inner_iterations=2, inner_tolerance=1e-9, outer_tolerance=1e-9)
         whole = solve_weighted_tvtv(f, a, b, cfg)
         with tempfile.TemporaryDirectory() as directory:
             cache = ResumableSolverCache(directory)

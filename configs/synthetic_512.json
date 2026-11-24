@@ -53,13 +53,10 @@
       "required_outer_successes": 2,
       "theta": 1.0,
       "step_safety": 0.9,
-      "norm_iterations": 40,
       "update_order": "u_then_v",
       "objective_increase_tolerance": 1e-08,
       "objective_increase_absolute_tolerance": 1e-10,
       "max_objective_backtracks": 12,
-      "step_policy": "balanced",
-      "residual_mode": "scaled",
       "balanced_u_step": 0.1,
       "verbose": false
     },
@@ -82,13 +79,10 @@
       "required_outer_successes": 2,
       "theta": 1.0,
       "step_safety": 0.9,
-      "norm_iterations": 40,
       "update_order": "u_then_v",
       "objective_increase_tolerance": 1e-08,
       "objective_increase_absolute_tolerance": 1e-10,
       "max_objective_backtracks": 12,
-      "step_policy": "balanced",
-      "residual_mode": "scaled",
       "balanced_u_step": 0.1,
       "verbose": false
     }

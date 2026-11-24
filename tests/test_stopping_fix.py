@@ -16,8 +16,7 @@ class TestStoppingFix(unittest.TestCase):
     def setUp(self):
         self.f = np.full((3, 8, 8), .4)
         self.v = np.zeros((2, 8, 8, 2))
-        self.config = WeightedTVTVConfig(hx=1/8, hy=1/8, step_policy="balanced",
-            residual_mode="scaled", min_inner_iterations=10,
+        self.config = WeightedTVTVConfig(hx=1/8, hy=1/8, min_inner_iterations=10,
             max_inner_u_iterations=30, max_inner_v_iterations=30)
 
     def test_image_transient_above_optimal_objective_does_not_exhaust_cap(self):
@@ -29,7 +28,6 @@ class TestStoppingFix(unittest.TestCase):
         result = solve_weighted_u_block(self.f, self.v, np.full(self.f.shape, .001),
                                         self.f, self.config, dual)
         self.assertTrue(result.converged)
-        self.assertTrue(result.returned_state_checked)
         self.assertEqual(result.iterations, 10)
         self.assertLess(result.accepted_step_scale, 1.)
         self.assertLessEqual(result.objective_after-result.objective_before, 1.01e-8)
@@ -47,7 +45,6 @@ class TestStoppingFix(unittest.TestCase):
         result = solve_weighted_v_block(self.f, np.full(self.v.shape[:-1], .0125),
                                         self.v, self.config, dual)
         self.assertTrue(result.converged)
-        self.assertTrue(result.returned_state_checked)
         self.assertEqual(result.iterations, 10)
         self.assertLess(result.accepted_step_scale, 1.)
         self.assertLessEqual(result.objective_after-result.objective_before, 1.01e-8)
@@ -61,7 +58,7 @@ class TestStoppingFix(unittest.TestCase):
             result = solve_weighted_u_block(self.f, self.v,
                 np.full(self.f.shape, .001), self.f, self.config)
         self.assertFalse(result.converged)
-        self.assertGreater(result.primal_residual, result.primal_residual_limit)
+        self.assertGreater(result.primal_residual, result.residual_limit)
 
     def test_below_minimum_inner_cap_does_not_become_converged(self):
         config = replace(self.config, max_inner_u_iterations=3)

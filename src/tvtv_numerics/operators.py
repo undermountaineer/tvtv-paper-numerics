@@ -1,7 +1,6 @@
 """Finite-difference operators used by the TV-TV model."""
 
 from __future__ import annotations
-from typing import Any, Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -248,42 +247,4 @@ def vector_field_gradient_adjoint(
             spatial_gradient_adjoint(p[..., 1, :], hx, hy),
         ),
         axis=-1,
-    )
-
-
-def _output_norm_squared(value: Any) -> float:
-    """Squared Euclidean norm for arrays or tuples of arrays."""
-    if isinstance(value, (tuple, list)):
-        return float(sum(_output_norm_squared(item) for item in value))
-
-    array = np.asarray(value)
-    return float(np.vdot(array, array).real)
-
-
-def estimate_operator_norm_squared(
-    forward: Callable[[Array], Any],
-    adjoint: Callable[[Any], Array],
-    domain_shape: tuple[int, ...],
-    iterations: int = 60,
-    seed: int = 20260907,
-) -> float:
-    """Estimate ||K||^2 by power iteration applied to K* K."""
-    if iterations < 1:
-        raise ValueError("iterations must be positive")
-
-    rng = np.random.default_rng(seed)
-    x = rng.normal(size=domain_shape)
-    x /= np.linalg.norm(x)
-
-    for _ in range(iterations):
-        z = np.asarray(adjoint(forward(x)))
-        z_norm = np.linalg.norm(z)
-
-        if z_norm == 0.0:
-            return 0.0
-
-        x = z / z_norm
-
-    return _output_norm_squared(forward(x)) / float(
-        np.vdot(x, x).real
     )
