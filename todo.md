@@ -19,13 +19,15 @@ Etiquetes:
 - [x] Passar els tests: `python -m unittest discover -s tests -v` (tots passen, 19-11-2026).
 - [x] `@lru_cache` a `scientific_code_id()` (`checkpoint_cache.py:49`). **Regressió meva:** `solve_identity` (línia 66) el crida per cada fila de `plan`/`report`, i ara això vol dir parsejar l'AST de 6 fitxers cada vegada. [cache]
 - [x] `stop()` (`run_original_1024.py:56`) ha de tolerar `ProcessLookupError`. Amb diversos workers, un Ctrl+C mata diversos processos, i algun pot acabar entre el `poll()` i el `killpg()`.
-- [ ] Fer el commit en una branca i deixar escrit al missatge que la memòria cau queda invalidada.
+- [x] Fer el commit en una branca i deixar escrit al missatge que la memòria cau queda invalidada (`solver-free-residuals`, 24-11-2026).
 
 ## 1. Validar els canvis del solver
 
-- [ ] Benchmark abans/després: `scripts/benchmark_performance.py --resolution 128 --case optimized` a `ed52042` (en un worktree) i a la versió nova. S'espera ~1.5–1.7× per iteració interna i gairebé el mateix nombre d'iteracions.
+- [x] Benchmark abans/després: `scripts/benchmark_performance.py --resolution 128 --case optimized` a `ed52042` (en un worktree) i a la versió nova. S'espera ~1.5–1.7× per iteració interna i gairebé el mateix nombre d'iteracions.
+  **Resultat (24-11-2026):** només 1.09× (32.2 s → 29.5 s; 19.2 → 17.5 ms per iteració interna). Iteracions idèntiques (35 externes; 617/1065 internes) i mateixa pèrdua (diferència relativa 1e-7). Fitxers a `bds/bench/`. Hipòtesi: a 128 domina la sobrecàrrega de numpy; es comprova a 256 (punt següent).
+  **PC de càlcul (i5-12400, 6 nuclis, 32 GB; 26-11-2026):** 12.2 s (7.3 ms per iteració interna) amb el `.venv` (Python 3.12, numpy 2.5.5). Mateixes iteracions i pèrdua igual fins a 8e-8 relatiu; $v_0$ ja difereix en els últims bits. Els dos benchmarks del portàtil van córrer amb el Python 3.14/numpy 2.4.6 del sistema, no amb el `.venv`, així que el 2.4× barreja maquinari i versions.
 - [ ] Una resolució completa a 256 ($\alpha=0.000875$) per comparar $u$, $v$, les iteracions externes i la pèrdua amb el resultat antic convergit, si encara és a `results/`.
-- [ ] `--workers 2` i `--workers 4` a 256: temps real per etapa. A 512, mesurar la memòria (RSS) per worker; encara no està mesurada.
+- [ ] `--workers 2` i `--workers 4` a 256: temps real per etapa. A 512, mesurar la memòria (RSS) per worker; encara no està mesurada. Fer-ho al PC (6 nuclis físics: `--workers` 5–6).
 
 ## 2. Optimització (només si, després de mesurar, encara cal)
 
@@ -41,7 +43,7 @@ Etiquetes:
   - PDHG adaptatiu (Goldstein–Li–Yuan 2015) amb els residus que ja es calculen.
   - Resolucions internes inexactes a les primeres iteracions externes.
   - Warm start des de l'alpha veïna: canvia el mínim local i fa dependre el resultat de l'ordre de la cerca.
-  - numba o CuPy: dependència nova.
+  - numba: dependència nova. CuPy, no: cap de les dues màquines té GPU NVIDIA.
   - float32, no: les toleràncies ($2.5\cdot10^{-7}$) són massa a prop de l'eps.
 
 ## 3. Neteja del codi
@@ -74,13 +76,16 @@ Etiquetes:
 
 ## 5. Reproductibilitat
 
-- [ ] Fixar versions: `environment.yml` no en fixa cap. Els resultats poden canviar amb numpy/scipy, i la clau de la memòria cau no inclou les versions. Generar un lock (`conda env export --no-builds` o conda-lock).
+- [x] Fixar versions: `environment.yml` no en fixa cap. Els resultats poden canviar amb numpy/scipy, i la clau de la memòria cau no inclou les versions. Generar un lock (`conda env export --no-builds` o conda-lock).
+  **Fet (26-11-2026) amb uv:** `requirements-lock.txt` (`uv pip freeze` del `.venv` del portàtil). El PC s'instal·la amb `uv pip install -r requirements-lock.txt` i `uv pip install -e . --no-deps`.
+- [ ] Al portàtil, `python` no és el del `.venv` (els benchmarks del 24-11 van córrer amb el Python 3.14 del sistema). Esbrinar amb quin Python es van calcular les resolucions de 256 de `results/`: si no va ser el 3.12 del `.venv`, la memòria cau no es reutilitzarà (vegeu `ast.dump`, més avall).
 - [ ] Guardar les versions de Python, numpy i scipy a les metadades de cada `result.npz` (`checkpoint_cache.py:125`).
 - [ ] `ast.dump` depèn de la versió menor de Python. Si es passa a 3.13, totes les claus canvien.
 
 ## 6. Documentació desactualitzada
 
 - [ ] `README.md:124`: "The neutral 256 configuration ... identifies the same saved experiment" ja no és cert.
+- [ ] README, "Installation": descriu conda i `environment.yml`, però l'entorn real és uv + `requirements-lock.txt`.
 - [ ] `docs/reproducibility.md`: els àlies amb `meeting_256_stopping_fixed.json` són falsos. Cal explicar l'execució en paral·lel i `--workers`.
 - [ ] `docs/performance_pass.md`, `stopping_fix.md`, `meeting_protocol.md` i `SOURCE_PROVENANCE.json` són històrics. Moure'ls a `docs/history/` o esborrar-los. `performance_pass.md` explica com aplicar un arxiu de pedaç que no existeix i conté rutes personals de Windows.
 - [ ] `docs/model.md`, apartat del solver (opcional): explicar que els residus fan servir $Ku$ i $K^*p$ de la iteració anterior.
