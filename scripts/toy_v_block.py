@@ -6,6 +6,8 @@ Solves only the velocity subproblem, tightly, for a fixed image u:
   clean/true    u = clean reference, v starts at the true motion
   stuck/stuck   u, v = where the joint solve started from the fit stops
   stuck/true    u = that stuck image, v starts at the true motion
+  tv/fit        u = TV denoising of the data with the transport switched off (kappa=1e-6),
+  tv/true         so u has not adapted to any v; v starts at the fit / the true motion
 Velocity errors are split into edge pixels (the clean frame changes by more than 0.01 per
 pixel), where the transport term sees the motion, and shape interiors, which only TV(v) can
 fill in. Saves v_block.png (maps and profiles of v) and v_block.npz in
@@ -30,7 +32,7 @@ import numpy as np
 
 from tvtv_numerics.data import add_noise, estimate_translation
 from tvtv_numerics.operators import dx_central, dy_central
-from tvtv_numerics.weighted_solver import WeightedTVTVConfig, solve_weighted_v_block
+from tvtv_numerics.weighted_solver import WeightedTVTVConfig, solve_weighted_u_block, solve_weighted_v_block
 
 SIGMA = (.05, .2)  # toy defaults, left / right
 
@@ -74,9 +76,14 @@ def main():
     print(f"  outer={info['outer']} converged={info['converged']} energy={info['energy']:.7e} "
           f"EPE edges {epe(v_stuck, edges):.3f} px, interior {epe(v_stuck, interior):.3f} px\n")
 
+    # Fixed 5000 PDHG steps: with kappa~0 the scaled transport-dual residual never passes the test.
+    tv_only = replace(cfg, kappa=1e-6, max_inner_u_iterations=5000, min_inner_iterations=5000)
+    u_tv = solve_weighted_u_block(f, v_fit, np.full(f.shape, a.alpha), f, tv_only).value
+
     b = np.full(v_fit.shape[:-1], beta)
     cases = {"clean/fit": (ref, v_fit), "clean/true": (ref, v_true),
-             "stuck/stuck": (u_stuck, v_stuck), "stuck/true": (u_stuck, v_true)}
+             "stuck/stuck": (u_stuck, v_stuck), "stuck/true": (u_stuck, v_true),
+             "tv/fit": (u_tv, v_fit), "tv/true": (u_tv, v_true)}
     results = {}
     print(f"{'case':<12} {'EPE edges px':>14} {'EPE interior px':>16} "
           f"{'v-block objective before -> after':>34} {'iters':>6} {'conv':>5} {'sec':>6}")
@@ -91,15 +98,15 @@ def main():
 
     out = ROOT / "results/toy_v_block" / (a.motion + (f"_blur{a.blur:g}" if a.blur else ""))
     out.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out / "v_block.npz", reference=ref, u_stuck=u_stuck, v_fit=v_fit, v_true=v_true,
+    np.savez_compressed(out / "v_block.npz", reference=ref, u_stuck=u_stuck, u_tv=u_tv, v_fit=v_fit, v_true=v_true,
                         **{name.replace("/", "_"): v for name, v in results.items()})
 
     # Maps of v_x on the first interval, and profiles across the two squares: the left pair moves
     # in x and the right pair in y for the 'split' motions.
     d = float(np.abs(shifts).max()) or 1.
     row, col = int(.3 * n), int(.75 * n)  # middle row of the left square, middle column of the right one
-    fig = plt.figure(figsize=(16, 8.5), constrained_layout=True)
-    grid = fig.add_gridspec(2, 4)
+    fig = plt.figure(figsize=(24, 8.5), constrained_layout=True)
+    grid = fig.add_gridspec(2, 6)
     for i, (name, v) in enumerate(results.items()):
         axis = fig.add_subplot(grid[0, i])
         im = axis.imshow(v[0, ..., 0] / h, cmap="RdBu_r", vmin=-2.5 * d, vmax=2.5 * d)
@@ -109,7 +116,7 @@ def main():
     profiles = ((np.s_[0, row, :], 0, f"left square, row {row}: v_x"),
                 (np.s_[0, :, col], 1, f"right square, column {col}: v_y"))
     for k, (index, comp, title) in enumerate(profiles):
-        axis = fig.add_subplot(grid[1, 2 * k:2 * k + 2])
+        axis = fig.add_subplot(grid[1, 3 * k:3 * k + 3])
         for name, v in results.items():
             axis.plot(v[..., comp][index] / h, label=name)
         axis.plot(v_true[..., comp][index] / h, "k--", label="true")
@@ -117,7 +124,8 @@ def main():
         axis.legend(fontsize=8, loc="upper left")
         twin = axis.twinx()
         twin.plot(ref[0][index[1:]], color="0.6", lw=1)
-        twin.set_ylabel("clean frame 0 (grey)", color="0.6")
+        twin.plot(u_tv[0][index[1:]], color="0.6", lw=1, ls=":")
+        twin.set_ylabel("frame 0: clean (grey), TV-only u (dotted)", color="0.6")
     fig.savefig(out / "v_block.png", dpi=110)
     plt.close(fig)
     print(f"outputs in {out}")

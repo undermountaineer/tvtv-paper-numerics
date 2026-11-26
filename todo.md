@@ -109,7 +109,12 @@ Resultats:
 - Conseqüència: les vores abruptes no aporten informació de velocitat al model discret. La $v$ final la decideix l'arrencada, i $u$ s'hi adapta. L'experiment principal funciona perquè allí $v_0$ és exacta per construcció; no posa a prova l'estimació del moviment.
 
 Pendent:
-- [ ] Vores suaus: `toy_v_block.py --blur 1.5` (i 0 per comparar). Mirar els perfils de `v_block.png`: pics a les vores sense blur, i el moviment real amb blur?
+- [x] Vores suaus: `toy_v_block.py --blur 1.5` (i 0 per comparar).
+  **Resultat (26-11-2026):** amb la imatge neta, l'error del mínim en $v$ baixa de 0.64 a 0.16 px a les vores i de 0.69 a 0.15 px a l'interior (85% → 21%). El 21% que queda quadra amb la linealització ($d/2\sigma\approx0.25$). La resolució conjunta, però, es queda a $v_0$ (0.53 px), i per a la $u$ encallada el mínim en $v$ continua sent la $v$ encallada.
+- [x] Mirar els perfils de `v_block.png` (sense blur: pics de $2d$ a les vores?).
+  **Resultat:** sense blur, pics d'1.2–1.5 px/fotograma al píxel de cada vora i $v=0$ a tota la resta. Amb blur 1.5, $v$ oscil·la a cada vora entre 0.40 i 1.06 (real: 0.75), tal com prediu la linealització $v\approx d+\tfrac{d^2}{2\sigma^2}(x-x_0)$ (interval previst a $2\sigma$: 0.375–1.125). El gradient al punt mitjà anul·laria este terme.
+- [ ] Separar les dues causes de l'encallament: bloc $v$ sobre una $u$ sense soroll obtinguda amb TV però sense terme de transport. Si troba el moviment, el problema és que $u$ s'adapta a $v_0$ (cal un altre arrencament); si no, és que TV torna a fer abruptes les vores (cal tocar la discretització del transport).
+- [ ] Opcional: `--motion split-slow --blur 1.5`; si és la linealització, l'error hauria de baixar a ~7%.
 - [ ] Si el blur ho confirma, decidir la discretització del transport per als experiments del paper: pre-suavitzat dins del terme de transport, penalització L2/Huber del residu (identificable però esbiaixada) o *warping* amb interpolació.
 - [ ] Al paper: dir que l'experiment principal no posa a prova l'estimació del moviment, o canviar l'escena (moviment no uniforme) i l'arrencada.
 
