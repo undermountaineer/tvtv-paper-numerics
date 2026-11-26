@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Can the v-block find the motion when u is right? Diagnostic on the toy 'split' scene.
+"""Can the v-block find the motion when u is right? Diagnostic on a toy scene (default 'split').
 
 Solves only the velocity subproblem, tightly, for a fixed image u:
   clean/fit     u = clean reference, v starts at the global fit (0.53 px off on the shapes)
@@ -10,6 +10,7 @@ Velocity errors are split into edge pixels (nonzero central gradient of the clea
 where the transport term sees the motion, and shape interiors, which only TV(v) can fill in.
 
     python -u scripts/toy_v_block.py
+    python -u scripts/toy_v_block.py --motion split-slow
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ SIGMA = (.05, .2)  # toy defaults, left / right
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--motion", choices=MOTIONS, default="split")
     p.add_argument("--alpha", type=float, default=2.83e-3, help="image TV weight of the joint solve")
     p.add_argument("--max-inner", type=int, default=20000, help="v-block iteration cap")
     p.add_argument("--tolerance", type=float, default=1e-6, help="scaled v-block residual limit")
@@ -47,7 +49,7 @@ def main():
                     inner_absolute_tolerance=a.tolerance * 1e-3)
     beta = settings["model"]["beta"]
 
-    shifts = np.array(MOTIONS["split"])
+    shifts = np.array(MOTIONS[a.motion])
     ref = render(n, shifts)
     left = np.arange(n) < n // 2
     f = add_noise(ref, np.where(left, *SIGMA) * np.ones((n, 1)), a.seed)
@@ -59,7 +61,7 @@ def main():
     def epe(v, mask):
         return float(np.linalg.norm(v - v_true, axis=-1)[mask].mean() / h)
 
-    print(f"split scene {n}x{n}, alpha {a.alpha:.3e}; joint solve from the global fit...", flush=True)
+    print(f"{a.motion} scene {n}x{n}, alpha {a.alpha:.3e}; joint solve from the global fit...", flush=True)
     u_stuck, v_stuck, info = solve(a.alpha, f, v_fit, beta, cfg)
     print(f"  outer={info['outer']} converged={info['converged']} energy={info['energy']:.7e} "
           f"EPE edges {epe(v_stuck, edges):.3f} px, interior {epe(v_stuck, interior):.3f} px\n")

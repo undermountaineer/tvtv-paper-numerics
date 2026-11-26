@@ -48,6 +48,7 @@ FRAMES = 5
 MOTIONS = {
     "translation": ((.75, .375), (.75, .375)),  # as in the 256 protocol; the global initial fit v0 is already right
     "split": ((.75, 0.), (0., .75)),            # left pair moves right, right pair moves down; v0 is wrong
+    "split-slow": ((.25, 0.), (0., .25)),       # split at a third of the speed: linearisation error ~d^2
     "static": ((0., 0.), (0., 0.)),             # no motion: separates TV effects from the transport term
 }
 # Ratio sqrt(2). Alpha=5.3e-4 was best at 256, and alpha scales like h (fidelity vs alpha*|grad u|).
