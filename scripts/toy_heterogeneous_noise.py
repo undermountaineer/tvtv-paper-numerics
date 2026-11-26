@@ -7,8 +7,8 @@ protocol), then solves once with the resulting two-valued alpha map. Beta and
 the solver tolerances are the "local" block of configs/synthetic_256.json.
 Nothing is cached or resumed.
 
---motion chooses how each pair of shapes moves (see MOTIONS); outputs go to
-results/toy_heterogeneous_noise/<motion>/ (or <motion>_v0-true/ with --v0 true).
+--motion chooses how each pair of shapes moves (see MOTIONS); --blur softens the
+edges. Outputs go to results/toy_heterogeneous_noise/<motion>[_blur<s>][_v0-true]/.
 
     python -u scripts/toy_heterogeneous_noise.py                                 # 64x64, translation
     python -u scripts/toy_heterogeneous_noise.py --motion split
@@ -34,6 +34,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))  # no editable install needed, as in benchmark_performance.py
@@ -55,9 +56,10 @@ MOTIONS = {
 ALPHAS = np.geomspace(5e-4, 3.2e-2, 13)
 
 
-def render(n, shifts, ss=8):
+def render(n, shifts, blur=0., ss=8):
     """Square (0.8) and disk (0.5) on a 0.2 background, once per half, each pair moving by its own
-    shift (pixels per frame); block-averaged from ss*n samples."""
+    shift (pixels per frame); block-averaged from ss*n samples, then blurred in space by a Gaussian
+    of std `blur` pixels (soft edges; the blurred scene still translates rigidly)."""
     c = (np.arange(n * ss) + .5) / (n * ss)
     frames = []
     for t in range(FRAMES):
@@ -68,7 +70,7 @@ def render(n, shifts, ss=8):
             z[(np.abs(x - x0) <= .1) & (np.abs(y - .3) <= .1)] = .8
             z[np.hypot(x - x0, y - .7) <= .1] = .5
         frames.append(z.reshape(n, ss, n, ss).mean((1, 3)))
-    return np.stack(frames)
+    return gaussian_filter(np.stack(frames), (0, blur, blur)) if blur else np.stack(frames)
 
 
 def solve(alpha, f, v0, beta, cfg):
@@ -97,6 +99,7 @@ def losses(u, v, ref, h):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--motion", choices=MOTIONS, default="translation")
+    p.add_argument("--blur", type=float, default=0., help="Gaussian std of the clean frames, in pixels")
     p.add_argument("--v0", choices=("fit", "true"), default="fit",
                    help="initial velocity: the observation-only global fit, or the true motion (diagnostic)")
     p.add_argument("--resolution", type=int, default=64)
@@ -112,6 +115,8 @@ def main():
         p.error("resolution must be even and at least 32")
     if min(a.sigma_left, a.sigma_right) < 0:
         p.error("noise levels must be nonnegative")
+    if a.blur < 0:
+        p.error("blur must be nonnegative")
 
     h = 1 / n
     settings = json.loads((ROOT / "configs/synthetic_256.json").read_text())
@@ -121,7 +126,7 @@ def main():
     beta = settings["model"]["beta"]
 
     shifts = np.array(MOTIONS[a.motion])
-    ref = render(n, shifts)
+    ref = render(n, shifts, a.blur)
     left = np.arange(n) < n // 2
     sigma = np.where(left, a.sigma_left, a.sigma_right) * np.ones((n, 1))
     f = add_noise(ref, sigma, a.seed)
@@ -135,7 +140,7 @@ def main():
         """Mean endpoint error (pixels per frame) on the shapes: the background has no defined motion."""
         return float(np.linalg.norm(v - v_true, axis=-1)[on_shapes].mean() / h)
 
-    print(f"{n}x{n}, {FRAMES} frames, motion '{a.motion}', sigma {a.sigma_left} (left) / {a.sigma_right} (right); "
+    print(f"{n}x{n}, {FRAMES} frames, motion '{a.motion}', blur {a.blur:g} px, sigma {a.sigma_left} (left) / {a.sigma_right} (right); "
           f"global fit {np.round(init['displacement_xy_pixels_per_interval'], 3)} px, "
           f"true {shifts[0]} (left) / {shifts[1]} (right) px; starting from the {a.v0} motion")
     print(f"{len(ALPHAS)} constant-alpha solves on {a.workers} workers...", flush=True)
@@ -203,14 +208,14 @@ def main():
     ax[2, 1].semilogx(ALPHAS, [r["outer"] for r in rows], "k-o", ms=3)
     ax[2, 1].set(xlabel="alpha", ylabel="outer iterations", title="solver cost")
 
-    out = a.output / (a.motion if a.v0 == "fit" else f"{a.motion}_v0-{a.v0}")
+    out = a.output / (a.motion + (f"_blur{a.blur:g}" if a.blur else "") + ("" if a.v0 == "fit" else f"_v0-{a.v0}"))
     out.mkdir(parents=True, exist_ok=True)
     fig.savefig(out / "toy.png", dpi=110)
     plt.close(fig)
     np.savez_compressed(out / "arrays.npz", f=f, reference=ref, sigma=sigma, alphas=ALPHAS, alpha_map=alpha_map,
                         v0=v0, u_constant=u_c, v_constant=v_c, u_map=u_map, v_map=v_map)
     (out / "summary.json").write_text(json.dumps(dict(
-        resolution=n, frames=FRAMES, motion=a.motion, v0_mode=a.v0, shifts_px=shifts.tolist(), sigma=[a.sigma_left, a.sigma_right],
+        resolution=n, frames=FRAMES, motion=a.motion, blur_px=a.blur, v0_mode=a.v0, shifts_px=shifts.tolist(), sigma=[a.sigma_left, a.sigma_right],
         seed=a.seed, beta=beta, solver=asdict(cfg), initialization=init, scan=rows, constant=const, spatial=spatial,
         relative_gain=gain), indent=2))
     print(f"outputs in {out}")

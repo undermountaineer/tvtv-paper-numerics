@@ -96,3 +96,69 @@ Etiquetes:
 - [ ] 512, amb pressupostos més grans (vegeu el README).
 - [ ] Sensibilitat del guany a la tolerància (`local` contra `tighter`). Els guanys històrics són d'~1% (`docs/status.md`), és a dir, de la mateixa mida que l'error numèric possible.
 - [ ] Comprovar si alguna $\alpha$ queda al límit de la cerca. A la versió de 128, les cel·les de dalt hi quedaven.
+
+## 8. Toy: identificabilitat del moviment (25/26-11-2026)
+
+Scripts: `scripts/toy_heterogeneous_noise.py` (escena 64×64, mateix quadrat i disc a cada meitat, σ=0.05 / 0.2) i `scripts/toy_v_block.py` (només el bloc $v$, amb tolerància estreta). Resultats a `results/toy_heterogeneous_noise/` i `results/toy_v_block/` (al PC).
+
+Resultats:
+- Soroll heterogeni: la meitat sorollosa tria una $\alpha$ el doble de gran, i el mapa guanya un 2–5% de pèrdua, tot a la meitat neta.
+- Moviment diferent a cada meitat (`split`): la resolució conjunta es queda a la $v_0$ de l'ajust global (0.53 px d'error) per a totes les $\alpha$. Arrencant del moviment real, l'energia final és un 2.5% més baixa i la pèrdua d'imatge un 40% més baixa.
+- Bloc $v$ amb la imatge neta: el mínim no depén de l'arrencada, però no és el moviment real. L'error és ≈$d$ (85–99%) tant a 0.75 com a 0.25 px per fotograma, així que no és la linealització.
+- Mecanisme (vora abrupta en 1D): la derivada temporal ocupa un píxel i la diferència centrada en reparteix el gradient en tres. El cost L1 és constant per a qualsevol velocitat normal en $[0,2d]$, i un pic $v_k=2d$, $v_{k\pm1}=0$ anul·la el residu amb un cost TV de $4d\beta$ per fila. Predicció $E_{\min}\approx\beta h^2\cdot4d\cdot N_{\text{files}}\cdot N_t$: 1.25e-3 i 3.75e-3, observat 1.21e-3 i 3.61e-3.
+- Conseqüència: les vores abruptes no aporten informació de velocitat al model discret. La $v$ final la decideix l'arrencada, i $u$ s'hi adapta. L'experiment principal funciona perquè allí $v_0$ és exacta per construcció; no posa a prova l'estimació del moviment.
+
+Pendent:
+- [ ] Vores suaus: `toy_v_block.py --blur 1.5` (i 0 per comparar). Mirar els perfils de `v_block.png`: pics a les vores sense blur, i el moviment real amb blur?
+- [ ] Si el blur ho confirma, decidir la discretització del transport per als experiments del paper: pre-suavitzat dins del terme de transport, penalització L2/Huber del residu (identificable però esbiaixada) o *warping* amb interpolació.
+- [ ] Al paper: dir que l'experiment principal no posa a prova l'estimació del moviment, o canviar l'escena (moviment no uniforme) i l'arrencada.
+
+## 9. Paper: correccions de la revisió
+
+Informe: `bds/overleaf/Review report BDS1.md` (23-11-2026). Ordre: primer B1, que és l'única llacuna matemàtica.
+
+- [ ] B1: dir que $g_Q\in L^{r'}(L)=L^{n+1}(L)$ a la discussió després de `P: nontrivial canonical parameters`, perquè $\int_L g_Q\varphi$ siga finita per a $\varphi\in BV(L)$.
+- [ ] C1: una línia a `E: counterexample` que mostre que cap minimitzador té $u$ constant.
+- [ ] D1: la cota de l'envolupant en tot punt ($\sup_z$), no q.p. (prova de `L: weighted spatial variation stability`).
+- [ ] D2: per què el límit $u$ és a $L^1(0,T;L^{n'})$ (pas 2 de `P: compactness and stability`).
+- [ ] D3: citar `L: weighted spatial variation stability` a la prova de Level 3.
+- [ ] D4: la constant intermèdia de l'absorció (pas 3 de `P: local rigidity`).
+- [ ] D5: una línia per a les cel·les dins de $P$ (prova de `T: existence of an optimal partition`).
+- [ ] D6: una altra lletra per al nombre de mostres a `R: several samples` ($m$ ja és l'índex de les successions).
+- [ ] Llegibilitat: comprovar si els punts #4, #6 i #9 de `bds/notes/readability_suggestions_main_1.md` estan fets.
+
+## 10. Paper: treure el nivell mínim N0 (TV)
+
+Idea: `bds/latex/bds-1-tgv/bds-1-tgv.tex`, Remark 4.5(d). Amb els moments espacials de cada llesca en lloc de la mitjana espai-temps, el terme de la divergència no necessita absorció. Va abans de §11, perquè canvia la prova que la secció de TGV estén.
+
+- [ ] Comprovar l'argument per a TV amb el competidor $(B(t_Q),\boldsymbol 0)$.
+- [ ] Si funciona: reescriure `P: local rigidity` sense $N_0$ i ajustar `R: rigidity regimes`, `C: fine-cell parameter independence`, `R: explicit depth` i la intro.
+- [ ] Si no funciona: escriure el perquè a la nota i llevar la Remark 4.5(d).
+
+## 11. Paper: cas TGV
+
+Nota: `bds/latex/bds-1-tgv/bds-1-tgv.tex` (26-11-2026). La llista del que cal comprovar és a la secció 7 de la nota.
+
+- [ ] Revisar la nota, sobretot les constants del Lemma 4.3 i la tria de $C_R$ a la Proposició 4.4.
+- [ ] Afegir els números d'enunciat de Temam (Korn–Poincaré i compacitat de $BD$) i compilar la nota.
+- [ ] Integrar-la al paper com una secció curta dins de Complements: TGV definit per llesques, rigidesa i l'exemple de les rampes que giren. La bona posició, resumida.
+- [ ] Actualitzar la intro (la frase de TGV, el paràgraf de resultats i el d'organització) i les paraules clau.
+
+## 12. Paper: revista i numèrica
+
+- [ ] Decidir la revista amb Elisa (tasca #83 de Vikunja, 04-12-2026): AMO sense numèrica, o JMIV amb una il·lustració numèrica.
+- [ ] Si és JMIV: triar l'experiment a partir de §7 i §8 i escriure'n la secció, dient en què difereix el model numèric de la teoria:
+  - transport penalitzat ($\kappa$) en lloc de la restricció exacta;
+  - només $\varrho=0$;
+  - cel·les només espacials, en tot l'interval de temps;
+  - només s'aprén $\alpha$.
+
+## 13. Paper: abans d'enviar
+
+- [x] A2: títol nou, "Optimal dyadic partitions for parameter learning in motion-compensated denoising and inpainting" (26-11-2026).
+- [ ] Escriure el resum (ara és buit).
+- [ ] A1: llevar `showlabels`, el text en taronja i els `\vi`, i omplir els agraïments (finançament de l'SFB?).
+- [ ] A3: activar les adreces dels autors (el bloc `\iffalse … \fi`).
+- [ ] A4: any i edició de `evans2025measure` a `references.bib`.
+- [ ] Decidir si es manté `MarchRiey2017` a la bibliografia.
+- [ ] Compilar, comprovar les referències i fer l'última lectura amb Tobias.
